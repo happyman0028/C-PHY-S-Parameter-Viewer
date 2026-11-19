@@ -13,6 +13,19 @@ python main.py
 
 `python app.py` remains available as a compatibility launcher.
 
+## Build the Windows EXE
+
+Build in a clean virtual environment so another installed Qt binding cannot be collected accidentally:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
+$env:QT_API = "pyside6"
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean C-PHY-S-Parameter-Viewer-v1.0.spec
+```
+
+The release specification excludes an incompatible ICU DLL that may be discovered elsewhere on the build machine and uses the Windows system ICU expected by Qt. It also keeps the bundled MSVC runtime aligned with the PySide6 wheel. The resulting file is `dist\C-PHY-S-Parameter-Viewer-v1.0.exe`.
+
 ## Quick start
 
 1. Click **Import S6P** for C-PHY data or **Import S4P** for DIFF data. Multi-file import shows progress in the status bar.
