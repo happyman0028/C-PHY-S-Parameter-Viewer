@@ -102,15 +102,108 @@ class ShiftPanViewBox(pg.ViewBox):
         super().mouseDragEvent(event, axis=axis)
 
 
+class LegendModeButton(QtWidgets.QGraphicsObject):
+    clicked = QtCore.Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.letter = "R"
+        self.light = False
+        self.hovered = False
+        self.setAcceptHoverEvents(True)
+        self.setAcceptedMouseButtons(QtCore.Qt.LeftButton)
+        self.setToolTip("R: switch to Report mode and edit Legend text")
+
+    def boundingRect(self) -> QtCore.QRectF:
+        return QtCore.QRectF(0, 0, 18, 18)
+
+    def paint(self, painter: QtGui.QPainter, _option, _widget=None) -> None:
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        background = "#dce9f2" if self.light and self.hovered else "#ffffff" if self.light else "#324456" if self.hovered else "#263341"
+        border = "#7f909f" if self.light else "#607386"
+        foreground = "#17212b" if self.light else "#f1f5f8"
+        painter.setPen(pg.mkPen(border, width=1))
+        painter.setBrush(pg.mkBrush(background))
+        painter.drawRoundedRect(self.boundingRect().adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+        font = painter.font()
+        font.setBold(True)
+        font.setPixelSize(11)
+        painter.setFont(font)
+        painter.setPen(pg.mkPen(foreground))
+        painter.drawText(self.boundingRect(), QtCore.Qt.AlignCenter, self.letter)
+
+    def set_mode(self, report_mode: bool, light: bool) -> None:
+        self.set_symbol(
+            "A" if report_mode else "R",
+            "A: return to Analysis Legend" if report_mode else "R: switch to Report mode and edit Legend text",
+            light,
+        )
+
+    def set_symbol(self, letter: str, tooltip: str, light: bool) -> None:
+        self.letter = letter
+        self.light = bool(light)
+        self.setToolTip(tooltip)
+        self.update()
+
+    def hoverEnterEvent(self, event) -> None:
+        self.hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event) -> None:
+        self.hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self.boundingRect().contains(event.pos()):
+            self.clicked.emit()
+        event.accept()
+
+
 class ConstrainedLegendItem(pg.LegendItem):
     """Movable legend whose frame always remains inside its parent ViewBox."""
 
-    def __init__(self, *args, margin: float = 8.0, **kwargs) -> None:
+    def __init__(self, *args, margin: float = 8.0, mode_toggle: bool = False, **kwargs) -> None:
         self.margin = float(margin)
         self._drag_target: QtCore.QPointF | None = None
         self._drag_clock = QtCore.QElapsedTimer()
+        self.mode_button: LegendModeButton | None = None
+        self.dock_button: LegendModeButton | None = None
         super().__init__(*args, **kwargs)
+        self._layout_margins_without_controls = self.layout.getContentsMargins()
+        if mode_toggle:
+            left, top, right, bottom = self._layout_margins_without_controls
+            self.layout.setContentsMargins(left, top, right + 22, bottom)
+            self.mode_button = LegendModeButton(self)
+            self.dock_button = LegendModeButton(self)
+            self.dock_button.set_symbol("↓", "Move Legend below Frequency", False)
+            self.dock_button.hide()
+            self.updateSize()
         self.setCacheMode(QtWidgets.QGraphicsItem.CacheMode.DeviceCoordinateCache)
+
+    def set_controls_visible(self, visible: bool) -> None:
+        if self.mode_button is None or self.dock_button is None:
+            return
+        left, top, right, bottom = self._layout_margins_without_controls
+        self.layout.setContentsMargins(left, top, right + (22 if visible else 0), bottom)
+        self.mode_button.setVisible(visible)
+        self.dock_button.hide()
+        self.layout.invalidate()
+        self.layout.activate()
+        self.updateSize()
+
+    def updateSize(self):
+        result = super().updateSize()
+        if self.mode_button is not None:
+            rect = self.boundingRect()
+            self.mode_button.setPos(rect.right() - 20, rect.top() + 2)
+        if self.dock_button is not None:
+            self.dock_button.hide()
+        return result
 
     def _clamped_position(self, requested) -> QtCore.QPointF:
         requested = QtCore.QPointF(requested)
@@ -166,6 +259,270 @@ class ConstrainedLegendItem(pg.LegendItem):
                 # at most once per display frame keeps dragging responsive.
                 self.autoAnchor(self._drag_target, relative=False)
                 self._drag_clock.restart()
+
+
+class DockedLegendLineSample(QtWidgets.QWidget):
+    """Qt line sample used by the stable below-plot Legend panel."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.color = "#4fc3f7"
+        self.line_style = "Solid"
+        self.entry_visible = True
+        self.setFixedSize(32, 24)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+
+    def set_content(self, color: str, line_style: str, visible: bool) -> None:
+        self.color = color
+        self.line_style = line_style
+        self.entry_visible = bool(visible)
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        color = QtGui.QColor(self.color)
+        if not self.entry_visible:
+            color.setAlpha(90)
+        pen = QtGui.QPen(color, 2.2, STYLE_MAP.get(self.line_style, QtCore.Qt.SolidLine))
+        pen.setCapStyle(QtCore.Qt.FlatCap)
+        painter.setPen(pen)
+        painter.drawLine(2, self.height() // 2, self.width() - 2, self.height() // 2)
+
+
+class DockedLegendEntry(QtWidgets.QFrame):
+    clicked = QtCore.Signal(int)
+
+    def __init__(self, index: int, parent=None) -> None:
+        super().__init__(parent)
+        self.index = index
+        self.interactive = True
+        self.sample = DockedLegendLineSample()
+        self.label = QtWidgets.QLabel()
+        self.label.setTextFormat(QtCore.Qt.PlainText)
+        self.label.setWordWrap(True)
+        self.label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 6, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self.sample, 0, QtCore.Qt.AlignVCenter)
+        layout.addWidget(self.label, 0, QtCore.Qt.AlignVCenter)
+        self.setFrameShape(QtWidgets.QFrame.NoFrame)
+
+    def set_content(
+        self, color: str, line_style: str, text: str, text_color: str,
+        bold: bool, visible: bool, font_size: int, interactive: bool,
+    ) -> None:
+        self.interactive = bool(interactive)
+        self.sample.set_content(color, line_style, visible)
+        self.label.setText(text)
+        font = QtGui.QFont(self.font())
+        font.setPointSize(font_size)
+        font.setBold(bool(bold))
+        self.label.setFont(font)
+        metrics = QtGui.QFontMetrics(font)
+        label_width = max(54, min(320, metrics.horizontalAdvance(text) + 8))
+        self.label.setFixedWidth(label_width)
+        color_value = QtGui.QColor(text_color)
+        if not visible:
+            color_value.setAlpha(105)
+        self.label.setStyleSheet(f"color:{color_value.name(QtGui.QColor.HexArgb)}; background:transparent;")
+        self.setCursor(QtCore.Qt.PointingHandCursor if interactive else QtCore.Qt.ArrowCursor)
+        self.adjustSize()
+
+    def mousePressEvent(self, event) -> None:
+        if self.interactive and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.index)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class DockedLegendWidget(QtWidgets.QWidget):
+    """Real Qt wrapping panel shown beneath the PlotWidget."""
+
+    mode_clicked = QtCore.Signal()
+    dock_clicked = QtCore.Signal()
+    entry_clicked = QtCore.Signal(int)
+    height_changed = QtCore.Signal(int)
+    geometry_changed = QtCore.Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.entries = []
+        self.font_size = 9
+        self.theme = "Dark"
+        self.report_mode = False
+        self.alignment = "Center"
+        self.content_left = 0
+        self.content_right = 120
+        # Bottom controls are temporarily removed from the UI. The floating
+        # Legend still owns the R/A and dock controls; keep these objects only
+        # for API/export compatibility until the bottom controls are redesigned.
+        self.controls_visible = False
+        self._rebuilding = False
+        self._entry_widgets: dict[int, DockedLegendEntry] = {}
+        self._layout_cache = []
+
+        self.frame = QtWidgets.QFrame()
+        self.frame.setObjectName("dockedLegendFrame")
+        self.frame.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.rows_layout = QtWidgets.QVBoxLayout(self.frame)
+        self.rows_layout.setContentsMargins(8, 4, 8, 4)
+        self.rows_layout.setSpacing(4)
+        self.outer_layout = QtWidgets.QHBoxLayout(self)
+        self.outer_layout.setContentsMargins(0, 0, 0, 0)
+        self.outer_layout.addWidget(self.frame)
+
+        self.mode_button = QtWidgets.QToolButton(self.frame)
+        self.mode_button.setFixedSize(24, 22)
+        self.mode_button.clicked.connect(self.mode_clicked)
+        self.mode_button.hide()
+        self.dock_button = QtWidgets.QToolButton(self.frame)
+        self.dock_button.setFixedSize(24, 22)
+        self.dock_button.setText("↑")
+        self.dock_button.setToolTip("Return Legend to the plot")
+        self.dock_button.clicked.connect(self.dock_clicked)
+        self.dock_button.hide()
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.setMinimumWidth(120)
+
+    def set_content(self, entries, font_size: int, report_mode: bool, theme: str, alignment: str = "Center") -> None:
+        self.entries = list(entries)
+        self.font_size = int(font_size)
+        self.report_mode = bool(report_mode)
+        self.theme = theme
+        self.alignment = alignment
+        self.mode_button.setText("A" if report_mode else "R")
+        self.mode_button.setToolTip(
+            "A: return to Analysis Legend" if report_mode
+            else "R: switch to Report mode and edit Legend text"
+        )
+        self._sync_entry_widgets()
+        self._apply_theme()
+        self._rebuild_rows()
+
+    def _sync_entry_widgets(self) -> None:
+        active_indices = {entry[0] for entry in self.entries}
+        for index in list(self._entry_widgets):
+            if index not in active_indices:
+                widget = self._entry_widgets.pop(index)
+                widget.setParent(None)
+                widget.deleteLater()
+        foreground = "#202830" if self.theme == "Light" else "#d8e0e8"
+        for index, color, line_style, text, text_color, bold, visible in self.entries:
+            widget = self._entry_widgets.get(index)
+            if widget is None:
+                widget = DockedLegendEntry(index, self.frame)
+                widget.clicked.connect(self.entry_clicked)
+                self._entry_widgets[index] = widget
+            widget.set_content(
+                color, line_style, text, text_color or foreground, bold, visible,
+                self.font_size, not self.report_mode,
+            )
+
+    def _apply_theme(self) -> None:
+        light = self.theme == "Light"
+        self.frame.setStyleSheet(
+            "QFrame#dockedLegendFrame {"
+            f"background:{'#ffffff' if light else '#0e151c'};"
+            f"border:1px solid {'#8e9aa5' if light else '#5a6875'}; border-radius:3px;"
+            "} QFrame#dockedLegendFrame QLabel { border:none; background:transparent; }"
+        )
+
+    def set_horizontal_bounds(self, left: int, right: int) -> None:
+        left = max(0, min(int(left), max(0, self.width() - 80)))
+        right = max(left + 80, min(int(right), self.width()))
+        self.content_left, self.content_right = left, right
+        self.outer_layout.setContentsMargins(left, 0, max(0, self.width() - right), 0)
+        self._rebuild_rows()
+
+    def set_controls_visible(self, visible: bool) -> None:
+        self.controls_visible = False
+        self.mode_button.hide()
+        self.dock_button.hide()
+        self._rebuild_rows()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.geometry_changed.emit()
+        QtCore.QTimer.singleShot(0, self._rebuild_rows)
+
+    def _clear_rows(self) -> None:
+        while self.rows_layout.count():
+            item = self.rows_layout.takeAt(0)
+            row_layout = item.layout()
+            if row_layout is not None:
+                while row_layout.count():
+                    row_layout.takeAt(0)
+                row_layout.deleteLater()
+
+    def _wrapped_rows(self, available: int):
+        ordered = [self._entry_widgets[entry[0]] for entry in self.entries if entry[0] in self._entry_widgets]
+        rows, current, used = [], [], 0
+        for widget in ordered:
+            row_index = len(rows)
+            row_available = max(80, available - (58 if row_index == 0 and self.controls_visible else 0))
+            width = widget.sizeHint().width()
+            required = width if not current else width + 6
+            if current and used + required > row_available:
+                rows.append(current)
+                current, used = [], 0
+            current.append(widget)
+            used += width if len(current) == 1 else width + 6
+        if current or not rows:
+            rows.append(current)
+        return rows
+
+    def _add_aligned_row(self, row, row_index: int) -> None:
+        layout = QtWidgets.QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        if self.alignment in ("Center", "Right"):
+            layout.addStretch(1)
+        for position, widget in enumerate(row):
+            layout.addWidget(widget, 0, QtCore.Qt.AlignVCenter)
+            if self.alignment == "Distribute evenly" and position < len(row) - 1:
+                layout.addStretch(1)
+        if self.alignment in ("Center", "Left") or not row:
+            layout.addStretch(1)
+        if row_index == 0 and self.controls_visible:
+            layout.addWidget(self.mode_button, 0, QtCore.Qt.AlignTop)
+            layout.addWidget(self.dock_button, 0, QtCore.Qt.AlignTop)
+        self.rows_layout.addLayout(layout)
+
+    def _rebuild_rows(self) -> None:
+        if self._rebuilding or self.width() <= 0:
+            return
+        self._rebuilding = True
+        try:
+            self._clear_rows()
+            available = max(80, self.content_right - self.content_left - 16)
+            rows = self._wrapped_rows(available)
+            for row_index, row in enumerate(rows):
+                self._add_aligned_row(row, row_index)
+            self.rows_layout.activate()
+            desired = max(36, self.rows_layout.sizeHint().height() + self.frame.frameWidth() * 2)
+            if self.height() != desired:
+                self.setFixedHeight(desired)
+                self.height_changed.emit(desired)
+            QtCore.QTimer.singleShot(0, self._update_layout_cache)
+        finally:
+            self._rebuilding = False
+
+    def _update_layout_cache(self) -> None:
+        cache = []
+        entry_map = {entry[0]: entry for entry in self.entries}
+        for index, widget in self._entry_widgets.items():
+            if index not in entry_map or not widget.isVisible():
+                continue
+            entry = entry_map[index]
+            sample_top_left = widget.sample.mapTo(self, QtCore.QPoint(0, 0))
+            label_top_left = widget.label.mapTo(self, QtCore.QPoint(0, 0))
+            sample_rect = QtCore.QRect(sample_top_left, widget.sample.size())
+            label_rect = QtCore.QRect(label_top_left, widget.label.size())
+            cache.append((sample_rect, label_rect, *entry[1:6], index, entry[6]))
+        self._layout_cache = cache
 
 
 class MarkerSplitter(QtWidgets.QSplitter):
@@ -348,9 +705,11 @@ class MarkerCard(QtWidgets.QFrame):
             previewed = index == self.preview_trace_index and not selected
             removal_preview = index == self.preview_trace_index and selected
             text_color = removal_color if removal_preview else selected_color if selected else preview_color if previewed else None
-            text = (
-                f"{html.escape(dataset_name)} · <b>{html.escape(parameter)}</b> · {html.escape(value_text)}"
-            )
+            if parameter:
+                trace_name = f"{html.escape(dataset_name)} · <b>{html.escape(parameter)}</b>"
+            else:
+                trace_name = html.escape(dataset_name)
+            text = f"{trace_name} · {html.escape(value_text)}"
             if text_color:
                 font_style = "; font-style:italic" if removal_preview else ""
                 text = f"<span style='color:{text_color}; font-weight:700{font_style}'>{text}</span>"
@@ -382,6 +741,120 @@ class MarkerCard(QtWidgets.QFrame):
         super().mousePressEvent(event)
 
 
+class CurveStylePreview(QtWidgets.QWidget):
+    """Read-only color and line-style sample used by the report label editor."""
+
+    def __init__(self, color: str, line_style: str, parent=None) -> None:
+        super().__init__(parent)
+        self.color = color
+        self.line_style = line_style
+        self.setFixedSize(76, 24)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setToolTip(f"{line_style} · {color} (edit in Plot / Traces)")
+
+    def paintEvent(self, _event) -> None:
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        pen = QtGui.QPen(QtGui.QColor(self.color), 2.4, STYLE_MAP.get(self.line_style, QtCore.Qt.SolidLine))
+        pen.setCapStyle(QtCore.Qt.FlatCap)
+        painter.setPen(pen)
+        center = self.rect().center().y()
+        painter.drawLine(7, center, self.width() - 7, center)
+        painter.end()
+
+
+class ReportLegendDialog(QtWidgets.QDialog):
+    """Edit report-friendly labels for traces currently visible on the plot."""
+
+    def __init__(
+        self,
+        config: PlotConfig,
+        datasets: dict[str, Dataset],
+        parent=None,
+        legend_hidden_trace_ids: set[str] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.config = config
+        self.datasets = datasets
+        self.setWindowTitle("Edit Report Legend")
+        self.resize(680, 440)
+
+        hidden_ids = legend_hidden_trace_ids or set()
+        visible_traces = [
+            trace for trace in config.traces
+            if trace.visible and trace.id not in hidden_ids
+        ]
+        self.table = QtWidgets.QTableWidget(len(visible_traces), 3)
+        self.table.setHorizontalHeaderLabels(["Curve", "Analysis legend", "Report legend text"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        self.table.setColumnWidth(0, 88)
+        for row, trace in enumerate(visible_traces):
+            dataset = datasets.get(trace.dataset_id)
+            full_name = f"{dataset.name if dataset else 'Missing'}: {trace.parameter}"
+            original = QtWidgets.QTableWidgetItem(full_name)
+            original.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            original.setData(QtCore.Qt.UserRole, trace.id)
+            label = QtWidgets.QLineEdit(config.report_legend_labels.get(trace.id, full_name))
+            preview_color = (
+                parent._display_color(trace.color)
+                if parent is not None and hasattr(parent, "_display_color") else trace.color
+            )
+            preview = CurveStylePreview(preview_color, trace.line_style)
+            preview_holder = QtWidgets.QWidget()
+            preview_layout = QtWidgets.QHBoxLayout(preview_holder)
+            preview_layout.setContentsMargins(4, 0, 4, 0)
+            preview_layout.addWidget(preview, alignment=QtCore.Qt.AlignCenter)
+            self.table.setCellWidget(row, 0, preview_holder)
+            self.table.setItem(row, 1, original)
+            self.table.setCellWidget(row, 2, label)
+
+        self.full_names_button = QtWidgets.QPushButton("Use Full Names")
+        self.full_names_button.clicked.connect(self._use_full_names)
+
+        note = QtWidgets.QLabel(
+            "Only visible traces are listed. Report text changes only the Legend; "
+            "Curve samples show the current color and line style but are read-only here; "
+            "edit them in Plot / Traces. Ctrl selections and Highlight state remain unchanged."
+        )
+        note.setWordWrap(True)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(note)
+        layout.addWidget(self.table, 1)
+        layout.addWidget(self.full_names_button, alignment=QtCore.Qt.AlignLeft)
+        layout.addWidget(buttons)
+
+    def _use_full_names(self) -> None:
+        for row in range(self.table.rowCount()):
+            editor = self.table.cellWidget(row, 2)
+            original = self.table.item(row, 1)
+            if isinstance(editor, QtWidgets.QLineEdit) and original is not None:
+                editor.setText(original.text())
+
+    def values(self) -> dict[str, str]:
+        valid_ids = {trace.id for trace in self.config.traces}
+        labels = {
+            trace_id: label for trace_id, label in self.config.report_legend_labels.items()
+            if trace_id in valid_ids
+        }
+        for row in range(self.table.rowCount()):
+            original = self.table.item(row, 1)
+            editor = self.table.cellWidget(row, 2)
+            if original is None:
+                continue
+            label = editor.text().strip() if isinstance(editor, QtWidgets.QLineEdit) else ""
+            labels[str(original.data(QtCore.Qt.UserRole))] = label or original.text()
+        return labels
+
+
 class AnalyzerPlotWidget(QtWidgets.QFrame):
     CURVE_QUALITY_AUTO = "Auto (Recommended)"
     CURVE_QUALITY_HIGH = "High quality"
@@ -390,6 +863,7 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
     INTERACTIVE_DOWNSAMPLE_FACTOR = 0.4
     IDLE_DOWNSAMPLE_FACTOR = 1.5
     INTERACTIVE_TRACE_THRESHOLD = 20
+    MINIMUM_CARD_HEIGHT = 590
     activated = QtCore.Signal(str)
     config_changed = QtCore.Signal()
     marker_changed = QtCore.Signal(str)
@@ -408,11 +882,17 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self.datasets = datasets
         self._is_active_plot = False
         self._width_before_freeze: tuple[int, int] | None = None
+        self._marker_external_extra = 0
+        self._marker_base_constraints: tuple[int, int] | None = None
+        self._legend_external_extra_height = 0
+        self._legend_base_minimum_height: int | None = None
+        self._legend_base_card_height: int | None = None
         self.marker_lines: dict[str, pg.InfiniteLine] = {}
         self.marker_cards: dict[str, MarkerCard] = {}
         self.active_marker_id: str | None = None
         self.selected_trace_indices: set[int] = set()
         self.preview_trace_index: int | None = None
+        self.legend_hidden_trace_ids: set[str] = set()
         self.find_result_active = False
         self.trace_items: dict[int, pg.PlotDataItem] = {}
         self.trace_hover_data: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -426,6 +906,9 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self.theme = theme
         self.setObjectName("plotCard")
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        # Multiple plots should scroll vertically instead of compressing each
+        # graph below the comfortable single-plot reading height.
+        self.setMinimumHeight(self.MINIMUM_CARD_HEIGHT)
 
         self.name_edit = QtWidgets.QLineEdit(config.name)
         plot_name_width = max(180, self.name_edit.fontMetrics().averageCharWidth() * 20 + 16)
@@ -460,10 +943,12 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self.plot.viewport().setMouseTracking(True)
         self.plot.viewport().installEventFilter(self)
         self.plot.showGrid(x=True, y=True, alpha=0.25)
-        self.legend = ConstrainedLegendItem(offset=(10, 10), margin=8)
+        self.legend = ConstrainedLegendItem(offset=(10, 10), margin=8, mode_toggle=True)
         self.legend.setParentItem(self.plot.getViewBox())
         self.plot.plotItem.legend = self.legend
         self.plot.getViewBox().sigResized.connect(lambda *_args: self.legend.ensure_inside())
+        self.legend.mode_button.clicked.connect(self.toggle_legend_mode)
+        self.legend.dock_button.clicked.connect(self.toggle_legend_location)
         self._configure_fit_button()
         self._build_context_menu()
         self.plot.setMinimumHeight(330)
@@ -480,16 +965,18 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self.marker_expand_button.hide()
         copy_image = QtWidgets.QToolButton(text="C")
         copy_image.setFixedWidth(28)
-        delete = QtWidgets.QToolButton(text="×")
         primary_row = QtWidgets.QHBoxLayout()
         primary_row.addWidget(self.name_edit)
         primary_row.addWidget(self.format_combo)
         primary_row.addStretch()
         for button in (
             apply_range, autoscale, add_marker, self.legend_button,
-            copy_image, delete,
+            copy_image,
         ):
             primary_row.addWidget(button)
+        self.plot_action_buttons = (
+            apply_range, autoscale, add_marker, self.legend_button, copy_image,
+        )
         range_row = QtWidgets.QHBoxLayout()
         range_row.addWidget(QtWidgets.QLabel("X GHz"))
         range_row.addWidget(self.freq_min)
@@ -513,20 +1000,38 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         marker_info_row.addStretch()
         marker_info_row.addWidget(self.marker_expand_button)
         toolbar = QtWidgets.QVBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(4)
         toolbar.addLayout(primary_row)
         toolbar.addLayout(range_row)
         toolbar.addWidget(self.marker_info_toolbar_row)
+        self.toolbar_widget = QtWidgets.QWidget()
+        self.toolbar_widget.setObjectName("plotToolbarWidget")
+        self.toolbar_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.toolbar_widget.setLayout(toolbar)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.addLayout(toolbar)
+        layout.addWidget(self.toolbar_widget, 0)
         self.capture_widget = QtWidgets.QWidget()
-        plot_row = QtWidgets.QHBoxLayout(self.capture_widget)
-        plot_row.setContentsMargins(0, 0, 0, 0)
-        plot_row.setSpacing(0)
+        capture_layout = QtWidgets.QVBoxLayout(self.capture_widget)
+        capture_layout.setContentsMargins(0, 0, 0, 0)
+        capture_layout.setSpacing(0)
+        self.docked_legend = DockedLegendWidget()
+        self.docked_legend.mode_clicked.connect(self.toggle_legend_mode)
+        self.docked_legend.dock_clicked.connect(self.toggle_legend_location)
+        self.docked_legend.entry_clicked.connect(self._toggle_docked_legend_trace)
+        self.docked_legend.height_changed.connect(self._docked_legend_height_changed)
+        self.docked_legend.geometry_changed.connect(self._schedule_docked_legend_bounds_update)
+        self.docked_legend.hide()
+        self.plot_column = QtWidgets.QWidget()
+        plot_column_layout = QtWidgets.QVBoxLayout(self.plot_column)
+        plot_column_layout.setContentsMargins(0, 0, 0, 0)
+        plot_column_layout.setSpacing(4)
+        plot_column_layout.addWidget(self.plot, 1)
+        plot_column_layout.addWidget(self.docked_legend, 0)
         self.marker_splitter = MarkerSplitter()
-        self.marker_splitter.addWidget(self.plot)
+        self.marker_splitter.addWidget(self.plot_column)
         self.marker_splitter.addWidget(self.marker_panel)
         self.marker_splitter.setStretchFactor(0, 1)
         self.marker_splitter.setStretchFactor(1, 0)
@@ -537,7 +1042,10 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self.marker_expand_button.clicked.connect(
             lambda: self.marker_splitter.set_panel_expanded(True, self.config.marker_info_width)
         )
-        plot_row.addWidget(self.marker_splitter)
+        capture_layout.addWidget(self.marker_splitter, 1)
+        self.view_box.sigResized.connect(
+            lambda *_args: self._schedule_docked_legend_bounds_update()
+        )
         layout.addWidget(self.capture_widget, 1)
 
         self.name_edit.editingFinished.connect(self._name_changed)
@@ -547,7 +1055,6 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         add_marker.clicked.connect(self.add_marker)
         self.legend_button.toggled.connect(self.set_legend_visible)
         copy_image.clicked.connect(self.copy_image_to_clipboard)
-        delete.clicked.connect(lambda: self.delete_requested.emit(self.config.id))
         self.plot.scene().sigMouseClicked.connect(self._plot_mouse_clicked)
         self.preview_timer = QtCore.QTimer(self)
         self.preview_timer.setInterval(50)
@@ -580,12 +1087,57 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
             self.config.marker_info_width,
             notify=False,
         )
+        self._apply_marker_panel_external_width(
+            self.marker_splitter.panel_expanded(), self.marker_splitter.panel_width()
+        )
         self._sync_marker_panel_controls()
 
     def _marker_panel_state_changed(self, expanded: bool, width: int) -> None:
         self.config.marker_info_expanded = bool(expanded)
         self.config.marker_info_width = int(width)
+        self._apply_marker_panel_external_width(expanded, width)
         self._sync_marker_panel_controls()
+
+    def _apply_marker_panel_external_width(self, expanded: bool, panel_width: int) -> None:
+        """Grow the plot card outward so Marker Info never steals graph width."""
+        new_extra = (int(panel_width) + self.marker_splitter.handleWidth()) if expanded else 0
+        old_extra = self._marker_external_extra
+        if new_extra == old_extra:
+            return
+
+        frozen = self.plot_width_is_frozen()
+        if old_extra == 0 and new_extra > 0:
+            self._marker_base_constraints = (
+                self._width_before_freeze
+                if frozen and self._width_before_freeze is not None
+                else (self.minimumWidth(), self.maximumWidth())
+            )
+
+        delta = new_extra - old_extra
+        if frozen:
+            self.setFixedWidth(max(1, self.width() + delta))
+        elif new_extra > 0:
+            # Use the current laid-out width as the baseline. The scroll area's
+            # horizontal bar then exposes the added panel instead of shrinking
+            # the PlotWidget inside the card.
+            target = max(self.minimumWidth(), self.width()) + delta
+            maximum = self._marker_base_constraints[1] if self._marker_base_constraints else self.maximumWidth()
+            self.setMinimumWidth(max(1, target))
+            self.setMaximumWidth(max(maximum, target))
+        elif self._marker_base_constraints is not None:
+            minimum, maximum = self._marker_base_constraints
+            self.setMinimumWidth(minimum)
+            self.setMaximumWidth(maximum)
+
+        self._marker_external_extra = new_extra
+        if new_extra == 0:
+            self._marker_base_constraints = None
+        self.updateGeometry()
+        if self.parentWidget() is not None:
+            self.parentWidget().updateGeometry()
+
+    def base_width_without_marker_info(self) -> int:
+        return max(1, self.width() - self._marker_external_extra)
 
     def _sync_marker_panel_controls(self) -> None:
         available = bool(self.config.markers)
@@ -668,6 +1220,10 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         if average_action is not None:
             plot_options.removeAction(average_action)
         menu = QtWidgets.QMenu("Plot Context", self.plot)
+        self.edit_report_legend_action = menu.addAction("Edit Report Legend Text…")
+        self.edit_report_legend_action.setVisible(self.config.legend_mode == "report")
+        self.edit_report_legend_action.triggered.connect(self.edit_report_legend)
+        menu.addSeparator()
         self.find_trace_action = menu.addAction("Find Selected Trace")
         self.find_trace_action.setVisible(False)
         self.find_trace_action.triggered.connect(self._find_selected_trace)
@@ -706,6 +1262,16 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
             elif event.type() == QtCore.QEvent.Type.Leave:
                 self._set_preview_trace(None)
         return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "docked_legend"):
+            self._schedule_docked_legend_bounds_update()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if hasattr(self, "docked_legend"):
+            self._schedule_docked_legend_bounds_update()
 
     def update_trace_preview(self, scene_pos: QtCore.QPointF, modifiers) -> None:
         if not modifiers & QtCore.Qt.KeyboardModifier.ControlModifier:
@@ -864,14 +1430,31 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
     def set_plot_width_frozen(self, frozen: bool, width: int | None = None) -> None:
         if frozen:
             if self._width_before_freeze is None:
-                self._width_before_freeze = (self.minimumWidth(), self.maximumWidth())
-            target = max(1, int(width if width is not None else self.width()))
+                self._width_before_freeze = (
+                    self._marker_base_constraints
+                    if self._marker_external_extra and self._marker_base_constraints is not None
+                    else (self.minimumWidth(), self.maximumWidth())
+                )
+            base_target = int(width if width is not None else self.base_width_without_marker_info())
+            target = max(1, base_target + self._marker_external_extra)
             self.setFixedWidth(target)
+            margins = self.layout().contentsMargins()
+            toolbar_width = max(1, base_target - margins.left() - margins.right())
+            self.toolbar_widget.setFixedWidth(toolbar_width)
         elif self._width_before_freeze is not None:
             minimum, maximum = self._width_before_freeze
-            self.setMinimumWidth(minimum)
-            self.setMaximumWidth(maximum)
             self._width_before_freeze = None
+            if self._marker_external_extra:
+                self._marker_base_constraints = (minimum, maximum)
+                target = max(minimum, self.base_width_without_marker_info()) + self._marker_external_extra
+                self.setMinimumWidth(target)
+                self.setMaximumWidth(max(maximum, target))
+            else:
+                self.setMinimumWidth(minimum)
+                self.setMaximumWidth(maximum)
+            self.toolbar_widget.setMinimumWidth(0)
+            self.toolbar_widget.setMaximumWidth(16_777_215)
+            self.toolbar_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.updateGeometry()
 
     def plot_width_is_frozen(self) -> bool:
@@ -916,6 +1499,9 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
             item.setClipToView(True)
             item.sigClicked.connect(lambda _item, event, i=index: self._trace_clicked(i, event))
             self.trace_items[index] = item
+            if trace.id in self.legend_hidden_trace_ids:
+                item.hide()
+            item.visibleChanged.connect(lambda i=index: self._trace_item_visibility_changed(i))
             self.trace_hover_data[index] = (dataset.frequency_hz / 1e9, np.asarray(y))
             if rendered % progress_interval == 0 or rendered == render_total:
                 self.refresh_progress.emit(rendered, render_total)
@@ -925,7 +1511,7 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         }
         self._selection_updated()
         self._apply_plot_fonts()
-        self.legend.setVisible(self.config.legend_visible)
+        self._sync_legend_location()
         self._rebuild_markers()
         self.apply_ranges(silent=True, record_home=self.home_view is None)
         QtCore.QTimer.singleShot(0, self.legend.ensure_inside)
@@ -1020,9 +1606,16 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         selected_color = "#9b2c00" if self.theme == "Light" else "#ffe36e"
         preview_color = "#005a9c" if self.theme == "Light" else "#8be9fd"
         removal_color = "#b42318" if self.theme == "Light" else "#ff6b6b"
+        report_mode = self.config.legend_mode == "report"
         size = f"{self.config.legend_font_size}pt"
         self.legend.setLabelTextSize(size)
         self.legend.setLabelTextColor(foreground)
+        if self.legend.mode_button is not None:
+            self.legend.mode_button.set_mode(report_mode, self.theme == "Light")
+        if self.legend.dock_button is not None:
+            self.legend.dock_button.set_symbol("↓", "Move Legend below Frequency", self.theme == "Light")
+        if self._sync_floating_legend_entries(report_mode):
+            indices = None
         # PyQtGraph 0.14 updates LabelItem options but does not rebuild the
         # existing HTML; explicitly regenerate every live legend label.
         item_indices = {id(item): index for index, item in self.trace_items.items()}
@@ -1033,15 +1626,92 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
             selected = index in self.selected_trace_indices if index is not None else False
             previewed = index == self.preview_trace_index and not selected if index is not None else False
             removal_preview = index == self.preview_trace_index and selected if index is not None else False
-            label.setText(
-                label.text,
-                size=size,
-                color=removal_color if removal_preview else selected_color if selected else preview_color if previewed else foreground,
-                bold=selected or previewed or removal_preview,
-                italic=removal_preview,
+            trace = self.config.traces[index] if index is not None and index < len(self.config.traces) else None
+            dataset = self.datasets.get(trace.dataset_id) if trace is not None else None
+            # Report Legend is presentation-only: its entries cannot toggle
+            # curve visibility. Analysis restores the normal click behavior.
+            sample.setAcceptedMouseButtons(
+                QtCore.Qt.MouseButton.NoButton
+                if report_mode else QtCore.Qt.MouseButton.LeftButton
             )
+            sample.setAcceptHoverEvents(not report_mode)
+            self._set_legend_sample_click_enabled(sample, not report_mode)
+            sample.setVisible(True)
+            label.setVisible(True)
+            analysis_text = (
+                f"{dataset.name}: {trace.parameter}" if dataset is not None and trace is not None
+                else label.text
+            )
+            shown_text = (
+                self.config.report_legend_labels.get(trace.id, analysis_text)
+                if report_mode and trace is not None else analysis_text
+            )
+            label.setText(
+                shown_text,
+                size=size,
+                color=(foreground if report_mode else removal_color if removal_preview else selected_color if selected else preview_color if previewed else foreground),
+                bold=False if report_mode else selected or previewed or removal_preview,
+                italic=False if report_mode else removal_preview,
+            )
+        self.legend.layout.invalidate()
+        self.legend.layout.activate()
         self.legend.updateSize()
         QtCore.QTimer.singleShot(0, self.legend.ensure_inside)
+        if hasattr(self, "docked_legend"):
+            self._refresh_docked_legend()
+
+    def _sync_floating_legend_entries(self, report_mode: bool) -> bool:
+        desired = [
+            (index, item)
+            for index, item in self.trace_items.items()
+            if not report_mode or item.isVisible()
+        ]
+        current_items = [getattr(sample, "item", None) for sample, _label in self.legend.items]
+        desired_items = [item for _index, item in desired]
+        if len(current_items) == len(desired_items) and all(
+            current is desired for current, desired in zip(current_items, desired_items)
+        ):
+            return False
+
+        # Hiding existing LabelItems leaves their QGraphicsGridLayout cells in
+        # place, producing blank rows, misplaced samples/text, and an oversized
+        # frame. Rebuild the actual rows whenever the mode changes which traces
+        # belong in the floating Legend.
+        self.legend.clear()
+        for index, item in desired:
+            trace = self.config.traces[index]
+            dataset = self.datasets.get(trace.dataset_id)
+            if dataset is None:
+                continue
+            self.legend.addItem(item, f"{dataset.name}: {trace.parameter}")
+        self.legend.layout.invalidate()
+        self.legend.layout.activate()
+        self.legend.updateSize()
+        return True
+
+    @staticmethod
+    def _set_legend_sample_click_enabled(sample, enabled: bool) -> None:
+        original_attribute = "_analysis_mouse_click_event"
+        original_handler = getattr(sample, original_attribute, None)
+        if enabled:
+            if original_handler is not None:
+                sample.mouseClickEvent = original_handler
+                delattr(sample, original_attribute)
+            return
+        if original_handler is not None:
+            return
+
+        # PyQtGraph's ItemSample receives its own scene MouseClickEvent and
+        # toggles PlotDataItem visibility directly, even when Qt accepted
+        # mouse buttons are disabled. Replace that handler in Report mode;
+        # keep the original bound method so Analysis can restore it exactly.
+        setattr(sample, original_attribute, sample.mouseClickEvent)
+
+        def ignore_report_click(event) -> None:
+            event.accept()
+            sample.update()
+
+        sample.mouseClickEvent = ignore_report_click
 
     def apply_ranges(self, silent: bool = False, record_home: bool = True) -> None:
         try:
@@ -1110,8 +1780,184 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
 
     def set_legend_visible(self, visible: bool) -> None:
         self.config.legend_visible = bool(visible)
-        self.legend.setVisible(self.config.legend_visible)
+        self._sync_legend_location()
         self.config_changed.emit()
+
+    def _legend_entries(self):
+        report_mode = self.config.legend_mode == "report"
+        selected_color = "#9b2c00" if self.theme == "Light" else "#ffe36e"
+        preview_color = "#005a9c" if self.theme == "Light" else "#8be9fd"
+        foreground = "#202830" if self.theme == "Light" else "#d8e0e8"
+        entries = []
+        for index, item in self.trace_items.items():
+            trace = self.config.traces[index]
+            dataset = self.datasets.get(trace.dataset_id)
+            if dataset is None:
+                continue
+            curve_visible = item.isVisible()
+            if report_mode and not curve_visible:
+                continue
+            analysis_text = f"{dataset.name}: {trace.parameter}"
+            text = self.config.report_legend_labels.get(trace.id, analysis_text) if report_mode else analysis_text
+            selected = index in self.selected_trace_indices
+            previewed = index == self.preview_trace_index and not selected
+            text_color = foreground if report_mode else selected_color if selected else preview_color if previewed else foreground
+            entries.append((
+                index, self._display_color(trace.color), trace.line_style, text,
+                text_color, False if report_mode else selected or previewed,
+                curve_visible,
+            ))
+        return entries
+
+    def _trace_item_visibility_changed(self, index: int) -> None:
+        item = self.trace_items.get(index)
+        if item is None or not (0 <= index < len(self.config.traces)):
+            return
+        trace_id = self.config.traces[index].id
+        if item.isVisible():
+            self.legend_hidden_trace_ids.discard(trace_id)
+        else:
+            self.legend_hidden_trace_ids.add(trace_id)
+        self._refresh_legend_labels(indices={index})
+        self._refresh_marker_cards()
+        self.config_changed.emit()
+
+    def _toggle_docked_legend_trace(self, index: int) -> None:
+        # Report mode deliberately omits hidden entries. Return to Analysis
+        # mode to reveal and restore a curve that was hidden from the Legend.
+        if self.config.legend_mode != "analysis":
+            return
+        item = self.trace_items.get(index)
+        if item is not None:
+            item.setVisible(not item.isVisible())
+
+    def _refresh_docked_legend(self) -> None:
+        if not hasattr(self, "docked_legend"):
+            return
+        self.docked_legend.set_content(
+            self._legend_entries(), self.config.legend_font_size,
+            self.config.legend_mode == "report", self.theme,
+            self.config.legend_below_alignment,
+        )
+
+    def _update_docked_legend_bounds(self) -> None:
+        if not hasattr(self, "docked_legend"):
+            return
+        if not self.docked_legend.isVisible() or self.docked_legend.width() <= 0:
+            return
+        # The plot lives inside MarkerSplitter while the below-Legend is its
+        # sibling. Avoid mapping a GraphicsScene point across those different
+        # widget containers: that can acquire the split pane's offset and
+        # collapse the Legend to a narrow strip at the far right. ViewBox scene
+        # coordinates already use PlotWidget viewport pixels, so combine them
+        # directly with the PlotWidget's origin in the below-Legend widget.
+        scene_rect = self.view_box.sceneBoundingRect()
+        plot_origin = self.plot.mapTo(self.docked_legend, QtCore.QPoint(0, 0)).x()
+        left = plot_origin + round(scene_rect.left())
+        right = plot_origin + round(scene_rect.right())
+
+        plot_left = max(0, plot_origin)
+        plot_right = min(self.docked_legend.width(), plot_origin + self.plot.width())
+        left = max(plot_left, min(left, plot_right))
+        right = max(left, min(right, plot_right))
+
+        # A normal ViewBox occupies most of its PlotWidget. If a transient Qt
+        # layout pass still reports a collapsed span, prefer a safe axis-like
+        # inset instead of preserving the unusable 40 px far-right frame.
+        expected_minimum = max(120, round(self.plot.width() * 0.35))
+        if right - left < expected_minimum and self.plot.width() >= 320:
+            safe_left_inset = max(44, round(self.plot.width() * 0.04))
+            left = min(plot_right - 80, plot_left + safe_left_inset)
+            right = max(left + 80, plot_right - 4)
+        self.docked_legend.set_horizontal_bounds(left, right)
+
+    def _schedule_docked_legend_bounds_update(self) -> None:
+        if not hasattr(self, "docked_legend"):
+            return
+        # Layout changes occur in more than one Qt pass when the below Legend
+        # changes card height. Recheck after the immediate and settled passes.
+        for delay in (0, 40, 160):
+            QtCore.QTimer.singleShot(delay, self._update_docked_legend_bounds)
+
+    def _sync_legend_location(self) -> None:
+        docked = self.config.legend_location == "below"
+        visible = self.config.legend_visible
+        self.legend.setVisible(visible and not docked)
+        if docked and visible:
+            self._refresh_docked_legend()
+            self._apply_docked_legend_height(self.docked_legend.height())
+            self.docked_legend.show()
+            self._schedule_docked_legend_bounds_update()
+        else:
+            self.docked_legend.hide()
+            self._apply_docked_legend_height(0)
+
+    def toggle_legend_location(self) -> None:
+        self.config.legend_location = "plot" if self.config.legend_location == "below" else "below"
+        self._sync_legend_location()
+        self.config_changed.emit()
+
+    def _docked_legend_height_changed(self, height: int) -> None:
+        if self.config.legend_location == "below" and self.config.legend_visible:
+            self._apply_docked_legend_height(height)
+
+    def _apply_docked_legend_height(self, height: int) -> None:
+        height = max(0, int(height))
+        old = self._legend_external_extra_height
+        if height == old:
+            return
+        if old == 0 and height > 0:
+            self._legend_base_minimum_height = self.minimumHeight()
+            self._legend_base_card_height = max(self.minimumHeight(), self.height())
+        if height > 0:
+            # Always derive the requested size from the original card height.
+            # Using the already-expanded current height here makes repeated
+            # Analysis/Report switches accumulate the Legend height.
+            base_height = self._legend_base_card_height
+            if base_height is None:
+                base_height = max(1, self.height() - old)
+                self._legend_base_card_height = base_height
+            self.setMinimumHeight(max(1, base_height + height))
+        elif self._legend_base_minimum_height is not None:
+            self.setMinimumHeight(self._legend_base_minimum_height)
+        self._legend_external_extra_height = height
+        if height == 0:
+            self._legend_base_minimum_height = None
+            self._legend_base_card_height = None
+        self.updateGeometry()
+
+    def toggle_legend_mode(self) -> None:
+        if self.config.legend_mode == "report":
+            self.config.legend_mode = "analysis"
+            if hasattr(self, "edit_report_legend_action"):
+                self.edit_report_legend_action.setVisible(False)
+            self._refresh_legend_labels()
+            self._refresh_marker_cards()
+            self.config_changed.emit()
+            return
+        if not self.edit_report_legend():
+            return
+        self.config.legend_mode = "report"
+        if hasattr(self, "edit_report_legend_action"):
+            self.edit_report_legend_action.setVisible(True)
+        self._refresh_legend_labels()
+        self._refresh_marker_cards()
+        self.config_changed.emit()
+
+    def edit_report_legend(self) -> bool:
+        dialog = ReportLegendDialog(
+            self.config,
+            self.datasets,
+            self,
+            self.legend_hidden_trace_ids,
+        )
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return False
+        self.config.report_legend_labels = dialog.values()
+        self._refresh_legend_labels()
+        self._refresh_marker_cards()
+        self.config_changed.emit()
+        return True
 
     def _remember_home_view(self) -> None:
         x_range, y_range = self.plot.viewRange()
@@ -1155,6 +2001,8 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self._style_fit_button()
         self.legend.setPen(pg.mkPen("#8e9aa5" if light else "#5a6875", width=1.0))
         self.legend.setBrush(pg.mkBrush(QtGui.QColor(255, 255, 255, 225) if light else QtGui.QColor(14, 21, 28, 225)))
+        if self.legend.mode_button is not None:
+            self.legend.mode_button.set_mode(self.config.legend_mode == "report", light)
         self._apply_trace_selection()
         for card in self.marker_cards.values():
             card.apply_theme(theme)
@@ -1172,6 +2020,8 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
     def _render_at_native_size(self, target: QtCore.QSize) -> QtGui.QPixmap:
         """Reflow the live plot at the target size instead of stretching a screenshot."""
         widget = self.capture_widget
+        right_margin = min(24, max(0, target.width() - 1))
+        content_target = QtCore.QSize(max(1, target.width() - right_margin), target.height())
         original_size = widget.size()
         original_minimum = widget.minimumSize()
         original_maximum = widget.maximumSize()
@@ -1180,12 +2030,12 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         layout_index = card_layout.indexOf(widget)
         card_layout.removeWidget(widget)
         try:
-            widget.setFixedSize(target)
+            widget.setFixedSize(content_target)
             widget.layout().activate()
             QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.LayoutRequest)
             QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
             pixmap = QtGui.QPixmap(target)
-            pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+            pixmap.fill(QtGui.QColor("#ffffff" if self.theme == "Light" else "#111820"))
             painter = QtGui.QPainter(pixmap)
             widget.render(painter, QtCore.QPoint(0, 0))
             painter.end()
@@ -1234,6 +2084,8 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
                 original_panel_width,
                 notify=False,
             )
+            self.legend.set_controls_visible(False)
+            self.docked_legend.set_controls_visible(False)
             QtWidgets.QApplication.processEvents()
             target = self._output_size(self.capture_widget.size())
             return self._render_at_native_size(target)
@@ -1250,6 +2102,8 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
                 original_panel_width,
                 notify=False,
             )
+            self.legend.set_controls_visible(True)
+            self.docked_legend.set_controls_visible(True)
             self._set_plot_render_state(original_factor, original_antialias)
             self._force_high_plot_quality = False
 
@@ -1320,7 +2174,6 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         return (x_min, x_max, y_min, y_max) if found else None
 
     def add_marker(self) -> None:
-        first_marker = not self.config.markers
         name = next_marker_name(self.config.markers)
         match = re.fullmatch(r"M(\d+)", name)
         number = int(match.group(1)) if match else len(self.config.markers) + 1
@@ -1336,8 +2189,6 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self.config.markers.append(marker)
         self.active_marker_id = marker.id
         self._rebuild_markers()
-        if first_marker:
-            self.marker_splitter.set_panel_expanded(True, self.config.marker_info_width)
         self.marker_changed.emit(f"Added {marker.name} at {frequency_ghz:.6g} GHz")
         self.config_changed.emit()
 
@@ -1507,7 +2358,13 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         readings = []
         for trace_index, trace in enumerate(self.config.traces):
             dataset = self.datasets.get(trace.dataset_id)
-            if not dataset or not trace.visible:
+            item = self.trace_items.get(trace_index)
+            if (
+                not dataset
+                or not trace.visible
+                or trace.id in self.legend_hidden_trace_ids
+                or (item is not None and not item.isVisible())
+            ):
                 continue
             if marker.frequency_hz < dataset.frequency_hz[0] or marker.frequency_hz > dataset.frequency_hz[-1]:
                 value_text = "Out of range"
@@ -1527,9 +2384,19 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
                     )
                 y = self._formatted_trace(dataset, trace.parameter)
                 value_text = f"{y[index]:.6g}"
-            readings.append((trace_index, trace.color, dataset.name, trace.parameter, value_text))
+            if self.config.legend_mode == "report":
+                report_name = self.config.report_legend_labels.get(
+                    trace.id, f"{dataset.name}: {trace.parameter}"
+                )
+                readings.append((trace_index, trace.color, report_name, "", value_text))
+            else:
+                readings.append((trace_index, trace.color, dataset.name, trace.parameter, value_text))
         card.set_content(marker, axis_label(self.config.display_format), readings)
         card.set_trace_highlights(self.selected_trace_indices, self.preview_trace_index)
+
+    def _refresh_marker_cards(self) -> None:
+        for marker in self.config.markers:
+            self._update_marker_card(marker)
 
     def _refresh_marker_highlights(self) -> None:
         self.marker_highlight_timer.start()

@@ -27,8 +27,8 @@ class Dataset:
     transform_revision: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
-        if self.network_type not in {"cphy", "dphy"}:
-            raise ValueError("Network type must be 'cphy' or 'dphy'.")
+        if self.network_type not in {"cphy", "dphy", "se"}:
+            raise ValueError("Network type must be 'cphy', 'dphy', or 'se'.")
         if self.network_type == "dphy" and self.impedance_preset in {"C-PHY nominal", "D-PHY nominal"}:
             self.impedance_preset = "DIFF nominal"
         if len(self.port_mapping) != self.nports and self.port_mapping == (1, 2, 3, 4, 5, 6):
@@ -50,12 +50,14 @@ class Dataset:
                     if self.impedance_preset == "DIFF nominal"
                     else (value, value)
                 )
-            else:
+            elif self.network_type == "cphy":
                 self.modal_reference_z0 = (
                     (2.0 * value, 1.5 * value, value / 3.0)
                     if self.impedance_preset == "C-PHY nominal"
                     else (value, value, value)
                 )
+            else:
+                self.modal_reference_z0 = ()
 
     @property
     def nports(self) -> int:
@@ -67,7 +69,7 @@ class Dataset:
 
     @property
     def analysis_label(self) -> str:
-        return "C-PHY" if self.network_type == "cphy" else "DIFF"
+        return {"cphy": "C-PHY/SE", "dphy": "DIFF/SE", "se": "SE"}[self.network_type]
 
     @property
     def points(self) -> int:
@@ -97,9 +99,11 @@ class TraceConfig:
     color: str = "#4fc3f7"
     line_style: str = "Solid"
     visible: bool = True
+    id: str = field(default_factory=lambda: uuid4().hex)
 
     def to_dict(self) -> dict:
         return {
+            "id": self.id,
             "dataset_id": self.dataset_id,
             "parameter": self.parameter,
             "color": self.color,
@@ -147,6 +151,10 @@ class PlotConfig:
     y_step: float | None = None
     legend_visible: bool = True
     legend_font_size: int = 9
+    legend_mode: str = "analysis"
+    legend_location: str = "plot"
+    legend_below_alignment: str = "Center"
+    report_legend_labels: dict[str, str] = field(default_factory=dict)
     title_font_size: int = 11
     axis_font_size: int = 9
     marker_info_expanded: bool = True
@@ -167,6 +175,10 @@ class PlotConfig:
             "y_step": self.y_step,
             "legend_visible": self.legend_visible,
             "legend_font_size": self.legend_font_size,
+            "legend_mode": self.legend_mode,
+            "legend_location": self.legend_location,
+            "legend_below_alignment": self.legend_below_alignment,
+            "report_legend_labels": dict(self.report_legend_labels),
             "title_font_size": self.title_font_size,
             "axis_font_size": self.axis_font_size,
             "marker_info_expanded": self.marker_info_expanded,

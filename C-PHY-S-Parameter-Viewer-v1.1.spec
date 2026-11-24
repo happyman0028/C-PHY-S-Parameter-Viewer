@@ -50,7 +50,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='C-PHY-S-Parameter-Viewer-v1.0',
+    name='C-PHY-S-Parameter-Viewer-v1.1',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 import skrf as rf
 
-from core.touchstone_loader import TouchstoneError, load_s4p, load_s6p
+from core.network_transform import extract_dataset
+from core.sparameter_math import se_parameter_names
+from core.touchstone_loader import TouchstoneError, load_s4p, load_s6p, load_touchstone
 
 
 def write_network(path: Path, z0=50.0, nports=6) -> Path:
@@ -22,6 +24,8 @@ def test_load_valid_s6p(tmp_path):
     assert dataset.z0 == 50
     assert dataset.impedance_preset == "C-PHY nominal"
     np.testing.assert_allclose(dataset.modal_reference_z0, (100, 75, 50 / 3))
+    assert dataset.modal == {}
+    extract_dataset(dataset, "Sxx11_1R")
     assert set(dataset.modal) == {1, 2, 3}
     assert dataset.modal[1].shape == (5, 6, 6)
 
@@ -34,7 +38,7 @@ def test_unequal_reference_impedance_is_renormalized_to_common_se_z0(tmp_path):
     assert dataset.se_reference_z0 == 50
     assert dataset.source_z0_summary == "variable 50–75 Ω"
     assert dataset.s_se_common.shape == (5, 6, 6)
-    assert set(dataset.modal) == {1, 2, 3}
+    assert dataset.modal == {}
 
 
 def test_load_valid_s4p_as_dphy_with_nominal_impedances(tmp_path):
@@ -42,10 +46,12 @@ def test_load_valid_s4p_as_dphy_with_nominal_impedances(tmp_path):
     dataset = load_s4p(path)
     assert dataset.nports == 4
     assert dataset.file_type == "S4P"
-    assert dataset.analysis_label == "DIFF"
+    assert dataset.analysis_label == "DIFF/SE"
     assert dataset.port_mapping == (1, 2, 3, 4)
     assert dataset.impedance_preset == "DIFF nominal"
     np.testing.assert_allclose(dataset.modal_reference_z0, (100, 25))
+    assert dataset.dphy_modal is None
+    assert extract_dataset(dataset, "Sdd11").shape == (5,)
     assert dataset.dphy_modal.shape == (5, 4, 4)
     assert dataset.s_se_common.shape == (5, 4, 4)
 
@@ -57,3 +63,23 @@ def test_s4p_and_s6p_loaders_reject_the_other_file_type(tmp_path):
         load_s6p(s4p)
     with pytest.raises(TouchstoneError, match=".s4p"):
         load_s4p(s6p)
+
+
+@pytest.mark.parametrize("nports", [1, 3])
+def test_generic_loader_supports_se_only_touchstone(nports, tmp_path):
+    path = write_network(tmp_path / f"generic.s{nports}p", nports=nports)
+    dataset = load_touchstone(path)
+    assert dataset.nports == nports
+    assert dataset.file_type == f"S{nports}P"
+    assert dataset.network_type == "se"
+    assert dataset.analysis_label == "SE"
+    assert dataset.modal_reference_z0 == ()
+    assert len(se_parameter_names(nports)) == nports ** 2
+    assert extract_dataset(dataset, se_parameter_names(nports)[-1]).shape == (5,)
+
+
+def test_se_access_does_not_trigger_modal_transform(tmp_path):
+    dataset = load_touchstone(write_network(tmp_path / "lazy.s6p"))
+    assert dataset.modal == {}
+    extract_dataset(dataset, "S11")
+    assert dataset.modal == {}

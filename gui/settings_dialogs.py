@@ -15,6 +15,7 @@ DEFAULT_PNG_SETTINGS = {
 }
 
 CURVE_RENDER_QUALITIES = ("Auto (Recommended)", "High quality", "Performance")
+LEGEND_BELOW_ALIGNMENTS = ("Center", "Left", "Right", "Distribute evenly")
 
 
 def load_png_settings(settings: QtCore.QSettings) -> dict:
@@ -41,7 +42,7 @@ class PlotSettingsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Plot Settings — Fonts / Rendering / PNG / Clipboard")
         self.setMinimumWidth(470)
-        font_values = font_values or {"legend": 9, "title": 11, "axis": 9}
+        font_values = font_values or {"legend": 9, "title": 11, "axis": 9, "legend_below_alignment": "Center"}
         self.legend_font = QtWidgets.QSpinBox()
         self.title_font = QtWidgets.QSpinBox()
         self.axis_font = QtWidgets.QSpinBox()
@@ -51,11 +52,17 @@ class PlotSettingsDialog(QtWidgets.QDialog):
         self.legend_font.setValue(int(font_values["legend"]))
         self.title_font.setValue(int(font_values["title"]))
         self.axis_font.setValue(int(font_values["axis"]))
-        self.apply_fonts_to_all = QtWidgets.QCheckBox("Apply font sizes to all plots")
+        self.legend_below_alignment = QtWidgets.QComboBox()
+        self.legend_below_alignment.addItems(LEGEND_BELOW_ALIGNMENTS)
+        self.legend_below_alignment.setCurrentText(
+            font_values.get("legend_below_alignment", "Center")
+        )
+        self.apply_fonts_to_all = QtWidgets.QCheckBox("Apply fonts and below-Legend alignment to all plots")
         font_form = QtWidgets.QFormLayout()
         font_form.addRow("Legend", self.legend_font)
         font_form.addRow("Title", self.title_font)
         font_form.addRow("Axis", self.axis_font)
+        font_form.addRow("Below-Legend alignment", self.legend_below_alignment)
         font_form.addRow(self.apply_fonts_to_all)
         font_group = QtWidgets.QGroupBox("Active Plot Font Size")
         font_group.setLayout(font_form)
@@ -143,6 +150,7 @@ class PlotSettingsDialog(QtWidgets.QDialog):
             "legend": self.legend_font.value(),
             "title": self.title_font.value(),
             "axis": self.axis_font.value(),
+            "legend_below_alignment": self.legend_below_alignment.currentText(),
             "apply_to_all": self.apply_fonts_to_all.isChecked(),
         }
 
@@ -160,38 +168,42 @@ class GuideDialog(QtWidgets.QDialog):
             <p><b>3R</b>: X ∝ [0,-1,1], Y ∝ [2,-1,-1]</p>
             <p>CM ∝ [1,1,1] for every rotation. X/Y/CM bases are power-normalized before reference-impedance renormalization.</p>"""),
             ("2. How to Use", """<h2>Workflow</h2><ol>
-            <li>Use <b>Import S4P</b> for DIFF (dm/cm) data or <b>Import S6P</b> for C-PHY data. Multiple files may be selected and import progress appears in the status bar.</li>
-            <li>In <b>Datasets</b>, verify or batch-edit port mapping and reference impedance. C-PHY datasets are listed before DIFF datasets.</li>
-            <li>In <b>Add Trace</b>, choose a labeled S4P/S6P dataset, modal or SE trace type, then filter parameters with ordinary text, <code>*</code> wildcards, <code>/</code> OR, or whitespace AND. ALL-DIFF / ALL-C-PHY is available when multiple matching datasets are loaded.</li>
-            <li>Select one or more parameters and add them to the active plot. Use <b>Add Plot</b> for another independent graph.</li>
+            <li>Use <b>Import SNP</b> to select one or more .sNp Touchstone files, including mixed port counts. Import progress appears in the status bar.</li>
+            <li>In <b>Datasets</b>, verify or batch-edit port mapping and reference impedance. <b>Highlight duplicate imports</b> marks every repeated full-path + processing-settings group in yellow without selecting or deleting anything; run it again to recalculate, then remove entries manually if desired. S1P/S2P/S3P/S5P and other port counts provide SE; S4P additionally provides DIFF (dm/cm), and S6P additionally provides C-PHY.</li>
+            <li>In <b>Add Trace</b>, choose a capability-labeled dataset and trace type, then filter parameters with ordinary text, <code>*</code> wildcards, <code>/</code> OR, or whitespace AND. ALL-DIFF / ALL-C-PHY and same-port-count ALL-SnP · SE groups appear when multiple matching datasets are loaded.</li>
+            <li>Select one or more parameters and add them to the active plot. Use <b>Add Plot</b> for another independent graph. Every Plot keeps a readable minimum card height; multiple plots extend the page vertically and use the main scrollbar instead of compressing their graphs. In <b>Plot / Traces</b>, each plot row provides <b>Go</b>, <b>Clone</b>, and <b>×</b>: Go activates and scrolls to it, Clone copies the complete plot after one confirmation, and × deletes it after two confirmations.</li>
             <li>Set display format, X/Y limits and steps. Apply accepts either endpoint order; Autoscale preserves the typed fields and ignores manual steps.</li>
             <li>Add markers, move or enter their GHz position, and hide/show/delete marker lines or the Marker Info panel. Legend can be shown, hidden and dragged within the graph.</li>
             <li>Use <b>Plot / Traces</b> to search, sort, select visible rows, and batch-edit visibility, color, line style or deletion. Delete All Traces requires two confirmations.</li>
             <li>Use <b>Save Workspace</b> / <b>Load Workspace</b> to preserve datasets, mapping, impedance, plots, traces and markers.</li>
             <li>Use <b>Plot Settings</b> for font sizes, rendering quality and persistent PNG/Clipboard options. Export the active plot as PNG, export traces as CSV, or use its <b>C</b> button to copy the configured image.</li>
             </ol>
-            <h2>Main Toolbar</h2><p>The right-side order is <b>Freeze Plots → Plot Settings → Export Plot PNG → Export Trace CSV → Light/Dark Mode → Guide</b>.</p>
+            <h2>Main Toolbar</h2><p>The right-side order is <b>✓ UnLock / closed-lock Lock → Plot Settings → Export Plot PNG → Export Trace CSV → Light/Dark Mode → Guide</b>. The state icons are custom theme-aware drawings rather than system emoji.</p>
             <h2>Plot Mouse Controls</h2><ul>
             <li><b>Hold Ctrl + move:</b> preview an unselected curve in blue/cyan; an already-selected curve changes to red as a removal preview.</li>
             <li><b>Ctrl + left-click:</b> add an unselected curve or remove an already-selected curve. Repeat to select multiple curves.</li>
             <li><b>Shift + left-drag:</b> pan the plot.</li>
             <li><b>Mouse wheel:</b> zoom only the selected plot (the card with the teal border). Over an unselected plot or outside the graph, the wheel scrolls the main plot list instead.</li>
-            <li><b>Freeze Plots:</b> the lock beside Light/Dark Mode keeps every plot card at its current width while the main window is resized. Horizontal scrolling appears when needed. Opening Marker Info may still change the graph area inside that fixed card.</li>
-            <li><b>Marker information:</b> use ▲ in the panel header to hide it; use ▼ Marker Info beside the plot toolbar controls to show it again. The boundary remains draggable while expanded.</li>
+            <li><b>Lock / UnLock:</b> the theme-aware check/lock control in the main toolbar keeps each graph and its plot-action toolbar at the current width while the main window is resized. Expanding Marker Info does not move Apply, Autoscale, + Marker, Legend, or C. Horizontal scrolling appears when needed.</li>
+            <li><b>Marker information:</b> adding a Marker leaves its information panel collapsed by default. Use ▼ Marker Info beside the plot toolbar controls to open it and ▲ in the panel header to hide it. The panel expands outward to the right without squeezing the graph, and the main horizontal scrollbar exposes the added area. The boundary remains draggable while expanded.</li>
+            <li><b>Legend R/A mode:</b> click <b>R</b> inside the Legend to enter Report mode and edit concise labels for currently visible traces. Hidden traces are omitted. The editor shows a read-only sample of each trace's current color and Solid/Dash/Dot style; change styles only in Plot / Traces. The button changes to <b>A</b>; click it to return to the full Analysis Legend. Ctrl selections and Highlight state are retained, while Report text stays in the normal theme color.</li>
+            <li><b>Legend position:</b> moving the Legend below Frequency is temporarily disabled while that interaction is redesigned; the floating ↓ control and bottom controls are hidden. Existing saved below-Legend layouts can still be displayed.</li>
+            <li><b>Report visibility:</b> a curve hidden through either Legend remains hidden when switching modes and is omitted from both the Report Legend and the Report Legend editor. Report Legend entries are presentation-only and cannot hide curves. Return to Analysis mode to restore or hide a curve.</li>
+            <li><b>Below-Legend layout:</b> Plot Settings controls its shared Legend font and Center (default), Left, Right, or Distribute evenly alignment. These settings can be applied to the active plot or every plot.</li>
             <li><b>Right-click:</b> open Plot Options, Find Selected Trace(s), and Clear Selected Traces.</li>
             <li><b>Find Selected Trace(s):</b> open Plot / Traces, persistently highlight every selected row, and pin highlighted rows above the normal sort order.</li>
             <li><b>Clear Selected Traces:</b> clear curve, Legend, Marker, and table highlights.</li>
             <li><b>FIT:</b> restore the latest Apply/Autoscale view after zooming or panning.</li>
-            </ul><p>The first marker opens the information panel. Use the panel's ▲ button to hide it; ▼ Marker Info above the capture area opens it again and is not included in copied/exported plot pixels. Once manually collapsed, adding more markers does not reopen it. Ordinary left/right clicks do not select or clear curves. Ctrl selections and Find highlights survive display-property changes, newly imported files, mapping/impedance edits, and newly added traces until explicitly cleared or deleted.</p>
+            </ul><p>Adding a marker does not open the information panel automatically. Use ▼ Marker Info above the capture area to open it; this control is not included in copied/exported plot pixels. Curves hidden through the Analysis Legend are omitted from Marker readings. Marker names use full Dataset/Parameter text in Analysis and the edited Report Legend text in Report mode. Ordinary left/right clicks do not select or clear curves. Ctrl selections and Find highlights survive display-property changes, newly imported files, mapping/impedance edits, and newly added traces until explicitly cleared or deleted.</p>
             <p>In Plot / Traces, <b>Select Visible</b> selects the currently filtered rows. <b>Delete All Traces</b> requires two confirmations before removing every trace from the active plot.</p>
             <p>Click a plot to select it before wheel-zooming. Marker controls continue to work independently.</p>
             <h2>Curve Rendering Quality</h2><ul>
             <li><b>Auto (Recommended):</b> smooth idle curves; large plots temporarily favor performance during navigation.</li>
             <li><b>High quality:</b> always use smooth antialiased curves.</li>
             <li><b>Performance:</b> disable smoothing and favor navigation speed.</li>
-            </ul><p>PNG and Copy output always use high-quality curve rendering.</p>"""),
-            ("3. Details", """<h2>Conventions</h2><p>S<sub>ij</sub> is response/output i due to stimulus/input j.</p><p>S4P DIFF nominal: Zdiff=2×SE, Zcommon=SE÷2. S6P C-PHY nominal: X=2×SE, Y=1.5×SE, CM=SE÷3.</p><p>The normalized DIFF/C-PHY transforms already imply these nominal modal references, so nominal results use the direct expanded equations without a second renormalization. Custom values apply an explicit post-transform target Z0.</p><p>SE traces are taken after port mapping and Common SE Z0 normalization.</p>"""),
-            ("4. Revision History", """<h2>v1.0</h2><ul><li>S6P C-PHY and S4P DIFF (dm/cm) analysis with SE access</li><li>Configurable port mapping and power-wave reference impedance</li><li>Multi-file import, progress reporting, ALL-C-PHY / ALL-DIFF trace addition and large-dataset performance improvements</li><li>Multiple plots, manual ranges/steps, Autoscale, FIT, movable Legend and multiple Markers with collapsible information</li><li>Ctrl curve preview/selection with synchronized Legend, Marker and Trace-table highlighting</li><li>Batch trace search/sort/show/hide/color/style/delete operations</li><li>Light/Dark themes, Freeze Plots, persistent Plot/PNG settings, Copy, PNG and CSV export</li><li>Active-plot wheel zoom with main-list scrolling over inactive plots</li><li>Workspace save/load and built-in operating guide</li></ul>"""),
+            </ul><p>PNG and Copy output always use high-quality curve rendering. R/A and ↓/↑ controls are omitted from output, and a small theme-colored margin is reserved at the right edge.</p>"""),
+            ("3. Details", """<h2>Conventions</h2><p>S<sub>ij</sub> is response/output i due to stimulus/input j.</p><p>S4P DIFF nominal: Zdiff=2×SE, Zcommon=SE÷2. S6P C-PHY nominal: X=2×SE, Y=1.5×SE, CM=SE÷3.</p><p>The normalized DIFF/C-PHY transforms already imply these nominal modal references, so nominal results use the direct expanded equations without a second renormalization. Custom values apply an explicit post-transform target Z0.</p><p>SE traces are taken after port mapping and Common SE Z0 normalization. DIFF and C-PHY matrices are calculated lazily only when a corresponding trace is first used.</p>"""),
+            ("4. Revision History", """<h2>v1.1</h2><ul><li>Unified Import SNP workflow for arbitrary Touchstone port counts; SE is always available, S4P adds DIFF (dm/cm), and S6P adds C-PHY</li><li>Duplicate-import finder highlights repeated full-path + processing-settings groups without selecting or deleting data</li><li>Readable fixed minimum plot-card height with vertical scrolling instead of compressing multiple plots</li><li>Report/Analysis Legend editing, visibility synchronization, theme-aware Highlight retention, and cleaner capture/export controls</li><li>Marker Information expands outward, starts collapsed, follows Legend visibility/report names, and keeps frozen plot controls fixed</li><li>Clear Lock/UnLock state icons, streamlined toolbar and per-plot controls, Clone-prefixed plot names, and safer confirmations</li><li>Large-dataset responsiveness, lazy modal transforms, rendering-quality choices, and active-plot-only wheel zoom</li></ul><h2>v1.0</h2><ul><li>Initial C-PHY/DIFF/SE viewer and analyzer release</li><li>Configurable port mapping and power-wave reference impedance</li><li>Multiple plots, ranges/steps, Autoscale, FIT, Legend, Markers, Copy, PNG/CSV export, workspace save/load, and Light/Dark themes</li><li>Ctrl curve selection with synchronized Legend, Marker, and Trace-table highlighting</li></ul>"""),
         )
         for title, html in pages:
             browser = QtWidgets.QTextBrowser()

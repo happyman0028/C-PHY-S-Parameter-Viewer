@@ -6,7 +6,7 @@ from enum import Enum
 import numpy as np
 
 PARAMETER_RE = re.compile(r"^S([xyc])([xyc])([12])([12])_([123])R$", re.I)
-SE_PARAMETER_RE = re.compile(r"^S([1-6])([1-6])$", re.I)
+SE_PARAMETER_RE = re.compile(r"^S(?:(\d+),(\d+)|([1-9])([1-9]))$", re.I)
 DPHY_PARAMETER_RE = re.compile(r"^S([dc])([dc])([12])([12])$", re.I)
 
 
@@ -34,16 +34,17 @@ def parameter_names() -> list[str]:
 
 def se_parameter_names(nports: int = 6) -> list[str]:
     """Return all logical-DUT single-ended S-parameter names."""
-    if nports not in (4, 6):
-        raise ValueError("Single-ended catalog supports 4-port or 6-port datasets.")
-    return [f"S{response}{stimulus}" for response in range(1, nports + 1) for stimulus in range(1, nports + 1)]
+    if nports < 1:
+        raise ValueError("A single-ended catalog requires at least one port.")
+    separator = "," if nports >= 10 else ""
+    return [f"S{response}{separator}{stimulus}" for response in range(1, nports + 1) for stimulus in range(1, nports + 1)]
 
 
 def parse_se_parameter(name: str) -> tuple[int, int]:
     match = SE_PARAMETER_RE.fullmatch(name.strip())
     if not match:
         raise ValueError(f"Invalid single-ended parameter name: {name}")
-    return int(match.group(1)), int(match.group(2))
+    return int(match.group(1) or match.group(3)), int(match.group(2) or match.group(4))
 
 
 def is_se_parameter(name: str) -> bool:

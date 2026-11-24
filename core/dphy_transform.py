@@ -29,18 +29,18 @@ class DPhyTransformer:
 
     @classmethod
     def transform_dataset(cls, dataset: Dataset) -> np.ndarray:
-        mapping = np.asarray(dataset.port_mapping, dtype=int) - 1
-        if dataset.nports != 4 or sorted(mapping.tolist()) != list(range(4)):
-            raise ValueError("DIFF port mapping must contain each physical port 1 through 4 exactly once.")
-        reordered = dataset.s_se[:, mapping][:, :, mapping]
-        source_z0 = np.asarray(dataset.source_z0, dtype=complex)[:, mapping]
+        from .network_transform import normalize_se_dataset
+
+        if dataset.nports != 4:
+            raise ValueError("DIFF mixed-mode conversion requires a 4-port dataset.")
         common_se = CPhyTransformer._positive_real(dataset.se_reference_z0, "Common SE Z0")
         target_values = dataset.modal_reference_z0 or ()
         if len(target_values) != 2:
             raise ValueError("DIFF reference impedance must contain differential and common-mode values.")
         differential_z0 = CPhyTransformer._positive_real(target_values[0], "Differential Z0")
         common_z0 = CPhyTransformer._positive_real(target_values[1], "Common-mode Z0")
-        dataset.s_se_common = CPhyTransformer.renormalize(reordered, source_z0, common_se)
+        if dataset.s_se_common is None:
+            normalize_se_dataset(dataset)
         equal_power_modal = cls.transform(dataset.s_se_common)
         source_modal_z0 = [2.0 * common_se, common_se / 2.0] * 2
         dataset.dphy_modal = CPhyTransformer.renormalize(

@@ -50,11 +50,10 @@ class CPhyTransformer:
 
     @classmethod
     def transform_dataset(cls, dataset: Dataset) -> dict[int, np.ndarray]:
-        mapping = np.asarray(dataset.port_mapping, dtype=int) - 1
-        if sorted(mapping.tolist()) != list(range(6)):
-            raise ValueError("Port mapping must contain each physical port 1 through 6 exactly once.")
-        reordered = dataset.s_se[:, mapping][:, :, mapping]
-        source_z0 = np.asarray(dataset.source_z0, dtype=complex)[:, mapping]
+        from .network_transform import normalize_se_dataset
+
+        if dataset.nports != 6:
+            raise ValueError("C-PHY modal conversion requires a 6-port dataset.")
         common_z0 = cls._positive_real(dataset.se_reference_z0, "Common SE Z0")
         modal_z0 = tuple(cls._positive_real(value, label) for value, label in zip(
             dataset.modal_reference_z0 or (), ("X-mode Z0", "Y-mode Z0", "CM-mode Z0")
@@ -62,7 +61,8 @@ class CPhyTransformer:
         if len(modal_z0) != 3:
             raise ValueError("Modal reference impedance must contain X, Y, and CM values.")
 
-        dataset.s_se_common = cls.renormalize(reordered, source_z0, common_z0)
+        if dataset.s_se_common is None:
+            normalize_se_dataset(dataset)
         target = np.asarray((*modal_z0, *modal_z0), dtype=float)
         nominal = cls.nominal_modal_z0(common_z0)
         source_modal_z0 = np.asarray((*nominal, *nominal), dtype=float)
@@ -123,8 +123,11 @@ class CPhyTransformer:
 
         if is_se_parameter(parameter):
             if dataset.s_se_common is None:
-                cls.transform_dataset(dataset)
+                from .network_transform import normalize_se_dataset
+                normalize_se_dataset(dataset)
             response_port, stimulus_port = parse_se_parameter(parameter)
             return dataset.s_se_common[:, response_port - 1, stimulus_port - 1]
         *_, r_index = parse_parameter(parameter)
+        if r_index not in dataset.modal:
+            cls.transform_dataset(dataset)
         return cls.extract(dataset.modal[r_index], parameter)

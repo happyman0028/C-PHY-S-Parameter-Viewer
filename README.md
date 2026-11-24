@@ -1,4 +1,4 @@
-# C-PHY S-Parameter Viewer & Analyzer — v1.0
+# C-PHY S-Parameter Viewer & Analyzer — v1.1
 
 Windows desktop engineering tool for C-PHY S6P and DIFF S4P analysis. It converts single-ended Touchstone data into C-PHY or DIFF modal S-parameters while retaining access to every SE trace.
 
@@ -21,18 +21,18 @@ Build in a clean virtual environment so another installed Qt binding cannot be c
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
 $env:QT_API = "pyside6"
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean C-PHY-S-Parameter-Viewer-v1.0.spec
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean C-PHY-S-Parameter-Viewer-v1.1.spec
 ```
 
-The release specification excludes an incompatible ICU DLL that may be discovered elsewhere on the build machine and uses the Windows system ICU expected by Qt. It also keeps the bundled MSVC runtime aligned with the PySide6 wheel. The resulting file is `dist\C-PHY-S-Parameter-Viewer-v1.0.exe`.
+The release specification excludes an incompatible ICU DLL that may be discovered elsewhere on the build machine and uses the Windows system ICU expected by Qt. It also keeps the bundled MSVC runtime aligned with the PySide6 wheel. The resulting file is `dist\C-PHY-S-Parameter-Viewer-v1.1.exe`.
 
 ## Quick start
 
-1. Click **Import S6P** for C-PHY data or **Import S4P** for DIFF data. Multi-file import shows progress in the status bar.
+1. Click **Import SNP** to load one or more `.sNp` Touchstone files. Every port count supports SE; S4P also supports DIFF (dm/cm), while S6P also supports C-PHY. Multi-file import shows progress in the status bar.
 2. Open the **Add Trace** tab.
 3. Dataset entries are labeled `[S6P · C-PHY]` or `[S4P · DIFF]`. Select the applicable modal or SE trace type, then filter or search the parameters.
 4. Select parameters and click **Add selected trace(s)**.
-5. Add more plots with **Add Plot**. Each plot has its own display format and ranges.
+5. Add more plots with **Add Plot**. Each plot has its own display format and ranges and retains a readable minimum height; multiple plots use the main vertical scrollbar instead of being compressed. In **Plot / Traces**, use **Go** to activate/scroll to a plot, **Clone** to copy all of its settings, traces and markers after one confirmation (named `Clone-<original name>`), or **×** to delete it after two confirmations.
 6. Use **Plot / Traces** to change visibility, color, line style, or remove traces.
 
 **Plot Settings → Curve rendering quality** provides three persistent global modes:
@@ -43,7 +43,17 @@ The release specification excludes an incompatible ICU DLL that may be discovere
 
 PNG export and the per-plot Copy button always render with high-quality antialiasing, regardless of the on-screen mode.
 
-The first marker opens the Marker Information panel as before. Click the panel's **▲** button to hide it; **▼ Marker Info** in the toolbar above the capture area reopens it, and the boundary can be dragged to resize while expanded. The toolbar control is outside copied/exported plot pixels. After a manual collapse, adding more markers does not reopen the panel. Each plot stores its own expanded state and width. PNG/Copy inclusion remains controlled independently by Plot Settings.
+Adding a Marker leaves the Marker Information panel collapsed by default. Use **▼ Marker Info** in the toolbar above the capture area to open it, then **▲** in the panel header to hide it. It expands the plot card outward to the right, preserving the graph width and using the main horizontal scrollbar for the added area. The toolbar control is outside copied/exported plot pixels. Each plot stores its own expanded state and width. PNG/Copy inclusion remains controlled independently by Plot Settings.
+
+The Legend contains an **R/A** mode control. **R** opens Report mode and lets you replace long visible-trace descriptions with report-friendly text; hidden traces are omitted. Its editor includes a read-only sample of each curve's current color and Solid/Dash/Dot style, while actual style changes remain in Plot / Traces. **A** returns to the full Analysis Legend. Ctrl selections and Highlight state survive both directions, while Report-mode text remains neutral for presentation output. Labels and the selected mode are saved in the workspace.
+
+Moving the Legend below the Frequency axis is temporarily disabled while that interaction is redesigned. The floating **↓** control and all bottom Legend controls are hidden. Existing workspaces that already store a below-Legend layout can still display that panel.
+
+In Analysis mode, click an entry in either Legend position to hide or restore its curve. A hidden below-Legend entry is dimmed so it remains available for restoration. When switching to Report mode, hidden curves are omitted from both the Report Legend and its label editor. Report entries are presentation-only and cannot hide curves; return to Analysis mode to change curve visibility.
+
+Marker Information follows the same visibility and naming rules: Legend-hidden curves are omitted, Analysis mode uses full Dataset/Parameter names, and Report mode uses the edited Report Legend text.
+
+PNG/Copy output omits the R/A and position controls and reserves a small theme-colored margin at the right edge so the final trace endpoint is not visually clipped.
 
 A validation file is included at `examples/cphy_demo_6port.s6p`. Regenerate it with `python examples/generate_demo_s6p.py`.
 
@@ -104,7 +114,7 @@ The **Single-ended** trace type provides all logical DUT-port parameters: 36 (`S
 - Mouse-wheel zoom is limited to the selected plot; the wheel scrolls the main plot list over inactive plots or non-graph areas
 - Compact two-row plot controls and a FIT home-view button that restores the latest Apply/Autoscale view after mouse zoom or pan
 - Light/Dark GUI switching with the last theme restored at startup
-- Freeze Plots beside the theme switch locks current plot-card widths while the main window is resized; horizontal scrolling appears when required, while Marker Info may still alter the graph area inside the card
+- The clear custom **check UnLock / closed-lock Lock** state beside the theme switch freezes both graph width and plot-action button positions; the theme-aware icons do not depend on system emoji fonts. Marker Info expands outward without moving Apply/Autoscale/+ Marker/Legend/C, and horizontal scrolling appears when required
 - Per-plot Legend Hide/Show with drag confinement inside the plot and theme-aware text/background/border colors
 - Simplified plot context menu with Plot Options and Average at the top level
 - Plot Settings controls Legend, plot Title, and Axis font sizes for the active plot or all plots
@@ -127,6 +137,7 @@ The **Single-ended** trace type provides all logical DUT-port parameters: 36 (`S
 - JSON workspace save/load with missing-file relocation
 - ALL-C-PHY / ALL-DIFF Add Trace entries when two or more matching datasets are loaded
 - One ordered dataset list (C-PHY/S6P first, DIFF/S4P second) with multi-select batch mapping, impedance editing, and removal
+- Duplicate-import detection highlights every dataset sharing the same normalized full path and processing settings; it never selects or deletes data automatically
 - Built-in four-section Guide covering rotations, workflow, technical conventions, and revision history
 
 Range fields accept either order (`-10 to 0` and `0 to -10` are equivalent). Autoscale changes only the current view and preserves the user's manual range text for later reuse. Automatic Plot names always advance from the highest existing `Plot N` number, and deleting a Plot requires confirmation.

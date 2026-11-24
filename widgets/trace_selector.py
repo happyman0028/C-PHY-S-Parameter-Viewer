@@ -111,7 +111,19 @@ class TraceSelector(QtWidgets.QWidget):
             self.dataset_combo.addItem(f"[ALL-C-PHY] {len(cphy)} S6P datasets", "ALL:cphy")
         if len(dphy) >= 2:
             self.dataset_combo.addItem(f"[ALL-DIFF] {len(dphy)} S4P datasets", "ALL:dphy")
-        for dataset in datasets.values():
+        by_ports: dict[int, list[Dataset]] = {}
+        for item in datasets.values():
+            by_ports.setdefault(item.nports, []).append(item)
+        for nports, items in sorted(by_ports.items()):
+            if len(items) >= 2:
+                self.dataset_combo.addItem(
+                    f"[ALL-S{nports}P · SE] {len(items)} datasets", f"ALL:se:{nports}"
+                )
+        ordered = sorted(
+            datasets.values(),
+            key=lambda item: ({"cphy": 0, "dphy": 1, "se": 2}[item.network_type], item.nports, item.name.casefold()),
+        )
+        for dataset in ordered:
             self.dataset_combo.addItem(f"[{dataset.file_type} · {dataset.analysis_label}] {dataset.name}", dataset.id)
         if current:
             index = self.dataset_combo.findData(current)
@@ -123,16 +135,20 @@ class TraceSelector(QtWidgets.QWidget):
     def _dataset_changed(self) -> None:
         data = self.dataset_combo.currentData()
         dataset = self._datasets.get(data)
-        network_type = data.split(":", 1)[1] if isinstance(data, str) and data.startswith("ALL:") else (dataset.network_type if dataset else "cphy")
+        parts = data.split(":") if isinstance(data, str) and data.startswith("ALL:") else []
+        network_type = parts[1] if parts else (dataset.network_type if dataset else "se")
         previous = self.trace_type.currentData()
         self.trace_type.blockSignals(True)
         self.trace_type.clear()
         if network_type == "dphy":
             self.trace_type.addItem("DIFF mixed-mode (dm/cm)", "dphy")
             self.trace_type.addItem("Single-ended (SE ports 1–4)", "se")
-        else:
+        elif network_type == "cphy":
             self.trace_type.addItem("C-PHY modal (X / Y / CM)", "cphy")
             self.trace_type.addItem("Single-ended (SE ports 1–6)", "se")
+        else:
+            nports = int(parts[2]) if len(parts) > 2 else (dataset.nports if dataset else 1)
+            self.trace_type.addItem(f"Single-ended (SE ports 1–{nports})", "se")
         index = self.trace_type.findData(previous)
         self.trace_type.setCurrentIndex(index if index >= 0 else 0)
         self.trace_type.blockSignals(False)
@@ -185,8 +201,13 @@ class TraceSelector(QtWidgets.QWidget):
         dataset_data = self.dataset_combo.currentData()
         dataset = self._datasets.get(dataset_data)
         if dataset is None and isinstance(dataset_data, str) and dataset_data.startswith("ALL:"):
-            kind = dataset_data.split(":", 1)[1]
-            dataset = next((item for item in self._datasets.values() if item.network_type == kind), None)
+            parts = dataset_data.split(":")
+            kind = parts[1]
+            if kind == "se" and len(parts) > 2:
+                nports = int(parts[2])
+                dataset = next((item for item in self._datasets.values() if item.nports == nports), None)
+            else:
+                dataset = next((item for item in self._datasets.values() if item.network_type == kind), None)
         if is_se:
             names = se_parameter_names(dataset.nports if dataset else 6)
         elif trace_type == "dphy":
@@ -220,8 +241,13 @@ class TraceSelector(QtWidgets.QWidget):
         if not dataset_id:
             return
         if isinstance(dataset_id, str) and dataset_id.startswith("ALL:"):
-            kind = dataset_id.split(":", 1)[1]
-            dataset_ids = [item.id for item in self._datasets.values() if item.network_type == kind]
+            parts = dataset_id.split(":")
+            kind = parts[1]
+            if kind == "se" and len(parts) > 2:
+                nports = int(parts[2])
+                dataset_ids = [item.id for item in self._datasets.values() if item.nports == nports]
+            else:
+                dataset_ids = [item.id for item in self._datasets.values() if item.network_type == kind]
         else:
             dataset_ids = [dataset_id]
         requests = [
