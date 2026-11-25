@@ -1,4 +1,4 @@
-# C-PHY S-Parameter Viewer & Analyzer — v1.1
+# C-PHY S-Parameter Viewer & Analyzer — v1.2
 
 Windows desktop engineering tool for C-PHY S6P and DIFF S4P analysis. It converts single-ended Touchstone data into C-PHY or DIFF modal S-parameters while retaining access to every SE trace.
 
@@ -21,10 +21,10 @@ Build in a clean virtual environment so another installed Qt binding cannot be c
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
 $env:QT_API = "pyside6"
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean C-PHY-S-Parameter-Viewer-v1.1.spec
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean C-PHY-S-Parameter-Viewer-v1.2.spec
 ```
 
-The release specification excludes an incompatible ICU DLL that may be discovered elsewhere on the build machine and uses the Windows system ICU expected by Qt. It also keeps the bundled MSVC runtime aligned with the PySide6 wheel. The resulting file is `dist\C-PHY-S-Parameter-Viewer-v1.1.exe`.
+The release specification excludes an incompatible ICU DLL that may be discovered elsewhere on the build machine and uses the Windows system ICU expected by Qt. It also keeps the bundled MSVC runtime aligned with the PySide6 wheel. The resulting file is `dist\C-PHY-S-Parameter-Viewer-v1.2.exe`.
 
 ## Quick start
 
@@ -42,6 +42,8 @@ The release specification excludes an incompatible ICU DLL that may be discovere
 - **Performance**: antialiasing is disabled and aggressive display downsampling remains enabled.
 
 PNG export and the per-plot Copy button always render with high-quality antialiasing, regardless of the on-screen mode.
+
+**Plot Settings → UI scale** scales the entire interface at 70%, 80%, 90%, or 100% (default). After saving a different scale, close and reopen the application to apply it.
 
 Adding a Marker leaves the Marker Information panel collapsed by default. Use **▼ Marker Info** in the toolbar above the capture area to open it, then **▲** in the panel header to hide it. It expands the plot card outward to the right, preserving the graph width and using the main horizontal scrollbar for the added area. The toolbar control is outside copied/exported plot pixels. Each plot stores its own expanded state and width. PNG/Copy inclusion remains controlled independently by Plot Settings.
 

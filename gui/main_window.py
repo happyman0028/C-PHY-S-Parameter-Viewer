@@ -13,7 +13,14 @@ from core.network_transform import extract_dataset, normalize_se_dataset
 from core.sparameter_math import format_trace
 from core.touchstone_loader import load_touchstone
 from core.workspace import load_workspace, save_workspace
-from gui.settings_dialogs import GuideDialog, PlotSettingsDialog, load_png_settings, save_png_settings
+from gui.settings_dialogs import (
+    UI_SCALE_KEY,
+    GuideDialog,
+    PlotSettingsDialog,
+    load_png_settings,
+    load_ui_scale,
+    save_png_settings,
+)
 from widgets.plot_widget import AnalyzerPlotWidget
 from widgets.trace_selector import TraceSelector, TraceTable
 
@@ -258,7 +265,7 @@ class DatasetSettingsDialog(QtWidgets.QDialog):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("C-PHY S-Parameter Viewer & Analyzer — v1.1")
+        self.setWindowTitle("C-PHY S-Parameter Viewer & Analyzer — v1.2")
         self.resize(1600, 980)
         self.setMinimumSize(1100, 720)
         self.datasets: dict[str, Dataset] = {}
@@ -495,7 +502,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "axis": active_plot.axis_font_size if active_plot else 9,
             "legend_below_alignment": active_plot.legend_below_alignment if active_plot else "Center",
         }
-        dialog = PlotSettingsDialog(self.png_settings, font_values, self)
+        current_scale = load_ui_scale(self.settings)
+        dialog = PlotSettingsDialog(self.png_settings, font_values, self, ui_scale=current_scale)
         if dialog.exec() == QtWidgets.QDialog.Accepted:
             self.png_settings.clear()
             self.png_settings.update(dialog.values())
@@ -513,6 +521,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     fonts["legend"], fonts["title"], fonts["axis"], emit=False
                 )
             self.status.showMessage("Plot rendering, font, and PNG settings saved", 3500)
+            selected_scale = dialog.ui_scale.currentData()
+            if selected_scale != current_scale:
+                self.settings.setValue(UI_SCALE_KEY, selected_scale)
+                self.settings.sync()
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Restart required",
+                    f"UI scale was saved at {selected_scale}%. Close and reopen the application to apply it.",
+                )
 
     def show_guide(self) -> None:
         GuideDialog(self).exec()

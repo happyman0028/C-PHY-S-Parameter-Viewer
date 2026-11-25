@@ -16,6 +16,13 @@ DEFAULT_PNG_SETTINGS = {
 
 CURVE_RENDER_QUALITIES = ("Auto (Recommended)", "High quality", "Performance")
 LEGEND_BELOW_ALIGNMENTS = ("Center", "Left", "Right", "Distribute evenly")
+UI_SCALE_OPTIONS = (70, 80, 90, 100)
+UI_SCALE_KEY = "ui/scale_percent"
+
+
+def load_ui_scale(settings: QtCore.QSettings) -> int:
+    scale = settings.value(UI_SCALE_KEY, 100, int)
+    return scale if scale in UI_SCALE_OPTIONS else 100
 
 
 def load_png_settings(settings: QtCore.QSettings) -> dict:
@@ -38,7 +45,9 @@ def save_png_settings(settings: QtCore.QSettings, values: dict) -> None:
 
 
 class PlotSettingsDialog(QtWidgets.QDialog):
-    def __init__(self, values: dict, font_values: dict | None = None, parent=None) -> None:
+    def __init__(
+        self, values: dict, font_values: dict | None = None, parent=None, *, ui_scale: int = 100
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Plot Settings — Fonts / Rendering / PNG / Clipboard")
         self.setMinimumWidth(470)
@@ -72,6 +81,12 @@ class PlotSettingsDialog(QtWidgets.QDialog):
             values.get("curve_render_quality", "Auto (Recommended)")
         )
         rendering_form = QtWidgets.QFormLayout()
+        self.ui_scale = QtWidgets.QComboBox()
+        for scale in UI_SCALE_OPTIONS:
+            self.ui_scale.addItem(f"{scale}%", scale)
+        self.ui_scale.setCurrentIndex(self.ui_scale.findData(ui_scale))
+        self.ui_scale.setToolTip("Scale the whole application. Restart to apply.")
+        rendering_form.addRow("UI scale (after restart)", self.ui_scale)
         rendering_form.addRow("Curve rendering quality", self.curve_render_quality)
         rendering_note = QtWidgets.QLabel(
             "Auto smooths idle curves and temporarily favors performance while navigating large plots. "
@@ -206,6 +221,14 @@ class GuideDialog(QtWidgets.QDialog):
             ("4. Revision History", """<h2>v1.1</h2><ul><li>Unified Import SNP workflow for arbitrary Touchstone port counts; SE is always available, S4P adds DIFF (dm/cm), and S6P adds C-PHY</li><li>Duplicate-import finder highlights repeated full-path + processing-settings groups without selecting or deleting data</li><li>Readable fixed minimum plot-card height with vertical scrolling instead of compressing multiple plots</li><li>Report/Analysis Legend editing, visibility synchronization, theme-aware Highlight retention, and cleaner capture/export controls</li><li>Marker Information expands outward, starts collapsed, follows Legend visibility/report names, and keeps frozen plot controls fixed</li><li>Clear Lock/UnLock state icons, streamlined toolbar and per-plot controls, Clone-prefixed plot names, and safer confirmations</li><li>Large-dataset responsiveness, lazy modal transforms, rendering-quality choices, and active-plot-only wheel zoom</li></ul><h2>v1.0</h2><ul><li>Initial C-PHY/DIFF/SE viewer and analyzer release</li><li>Configurable port mapping and power-wave reference impedance</li><li>Multiple plots, ranges/steps, Autoscale, FIT, Legend, Markers, Copy, PNG/CSV export, workspace save/load, and Light/Dark themes</li><li>Ctrl curve selection with synchronized Legend, Marker, and Trace-table highlighting</li></ul>"""),
         )
         for title, html in pages:
+            if title == "4. Revision History":
+                html = (
+                    "<h2>v1.2</h2><ul>"
+                    "<li>Application-wide UI scale and a restart prompt after saving a new scale</li>"
+                    "<li>Report Legend fits shorter labels after switching modes</li>"
+                    "<li>Custom Windows application icon</li></ul>"
+                    + html
+                )
             browser = QtWidgets.QTextBrowser()
             browser.setHtml(html)
             tabs.addTab(browser, title)

@@ -5,11 +5,13 @@ from pathlib import Path
 import PySide6
 
 
+app_icon = Path(SPECPATH) / 'assets' / 'cphy-viewer.ico'
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[(str(app_icon), 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -50,7 +52,8 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='C-PHY-S-Parameter-Viewer-v1.1',
+    name='C-PHY-S-Parameter-Viewer-v1.2',
+    icon=str(app_icon),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

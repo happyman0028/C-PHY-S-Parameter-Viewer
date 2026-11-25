@@ -196,14 +196,17 @@ class ConstrainedLegendItem(pg.LegendItem):
         self.layout.activate()
         self.updateSize()
 
-    def updateSize(self):
-        result = super().updateSize()
+    def updateSize(self) -> None:
+        if self.size is None:
+            # Allocated label widths still reflect the old frame after a text
+            # change. The layout's preferred size uses the current text and
+            # includes spacing and the margin reserved for the A/R button.
+            self.resize(self.layout.effectiveSizeHint(QtCore.Qt.SizeHint.PreferredSize))
         if self.mode_button is not None:
             rect = self.boundingRect()
             self.mode_button.setPos(rect.right() - 20, rect.top() + 2)
         if self.dock_button is not None:
             self.dock_button.hide()
-        return result
 
     def _clamped_position(self, requested) -> QtCore.QPointF:
         requested = QtCore.QPointF(requested)

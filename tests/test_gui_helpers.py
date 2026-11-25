@@ -362,6 +362,51 @@ def test_legend_r_a_report_mode_edits_text_hides_hidden_and_preserves_highlight(
     assert app is not None
 
 
+def test_floating_legend_shrinks_for_short_report_labels_with_all_traces_visible(monkeypatch):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    frequency = np.array([1e9, 2e9])
+    dataset = Dataset(
+        "Long_Dataset_Name_Used_For_Analysis_Legend_Labels",
+        "dut.s4p",
+        frequency,
+        np.zeros((2, 4, 4), complex),
+        50,
+        network_type="dphy",
+    )
+    first, second = (TraceConfig(dataset.id, parameter) for parameter in ("S11", "S22"))
+    config = PlotConfig("Plot", traces=[first, second])
+    widget = AnalyzerPlotWidget(config, {dataset.id: dataset}, {}, "Dark")
+    widget.resize(1100, 680)
+    widget.show()
+    app.processEvents()
+
+    analysis_width = widget.legend.width()
+    original_samples = [sample for sample, _ in widget.legend.items]
+    monkeypatch.setattr("widgets.plot_widget.ReportLegendDialog.exec", lambda _: QtWidgets.QDialog.Accepted)
+    monkeypatch.setattr(
+        "widgets.plot_widget.ReportLegendDialog.values",
+        lambda _: {first.id: "35厚度", second.id: "43厚度"},
+    )
+
+    widget.toggle_legend_mode()
+    app.processEvents()
+    report_width = widget.legend.width()
+    assert report_width < analysis_width / 2
+    assert [sample for sample, _ in widget.legend.items] == original_samples
+    assert [label.text for _, label in widget.legend.items] == ["35厚度", "43厚度"]
+    first_label = widget.legend.items[0][1]
+    text_right = first_label.mapRectToParent(first_label.itemRect()).right()
+    assert text_right < widget.legend.mode_button.pos().x()
+
+    widget.toggle_legend_mode()
+    app.processEvents()
+    assert np.isclose(widget.legend.width(), analysis_width)
+    widget.toggle_legend_mode()
+    app.processEvents()
+    assert np.isclose(widget.legend.width(), report_width)
+    widget.close()
+
+
 def test_cancel_report_legend_editor_keeps_analysis_mode(monkeypatch):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     frequency = np.array([1e9, 2e9])
@@ -1313,7 +1358,7 @@ def test_main_window_exposes_v1_import_theme_guide_and_plot_settings_actions():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     window = MainWindow()
     labels = {action.text() for action in window.findChildren(QtGui.QAction)}
-    assert "v1.1" in window.windowTitle()
+    assert "v1.2" in window.windowTitle()
     assert {"Import SNP", "UnLock", "Guide", "Plot Settings", "Export Plot PNG", "Export Trace CSV"} <= labels
     assert "Import S6P" not in labels and "Import S4P" not in labels
     toolbar_labels = [action.text() for action in window.findChildren(QtWidgets.QToolBar)[0].actions()]
