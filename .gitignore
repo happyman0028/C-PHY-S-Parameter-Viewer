@@ -7,7 +7,7 @@ build/
 dist*/
 build*/
 *.spec
-!C-PHY-S-Parameter-Viewer-v1.2.spec
+!C-PHY-S-Parameter-Viewer-v1.3.spec
 *.png
 *.csv
 !examples/*.s6p

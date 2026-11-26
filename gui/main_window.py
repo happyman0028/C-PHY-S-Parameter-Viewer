@@ -263,9 +263,9 @@ class DatasetSettingsDialog(QtWidgets.QDialog):
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowTitle("C-PHY S-Parameter Viewer & Analyzer — v1.2")
+    def __init__(self, parent=None, *, settings: QtCore.QSettings | None = None) -> None:
+        super().__init__(parent, QtCore.Qt.Window)
+        self.setWindowTitle("C-PHY S-Parameter Viewer & Analyzer — v1.3")
         self.resize(1600, 980)
         self.setMinimumSize(1100, 720)
         self.datasets: dict[str, Dataset] = {}
@@ -278,7 +278,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._loader_refs: list[DatasetLoader] = []
         self._pending_imported_dataset_count = 0
         self.duplicate_dataset_ids: set[str] = set()
-        self.settings = QtCore.QSettings()
+        self.settings = settings if settings is not None else QtCore.QSettings()
+        self._guide_demo_window: MainWindow | None = None
         self.theme = self.settings.value("ui/theme", "Dark", str)
         self.png_settings = load_png_settings(self.settings)
         self._build_ui()
@@ -289,8 +290,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_ui(self) -> None:
         def make_dataset_tree() -> QtWidgets.QTreeWidget:
             tree = QtWidgets.QTreeWidget()
-            tree.setHeaderLabels(["Dataset", "Info"])
+            tree.setHeaderLabels(["Dataset", "Freq. (GHz)"])
+            tree.setExpandsOnDoubleClick(True)
+            tree.header().setStretchLastSection(False)
             tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+            tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
+            tree.setColumnWidth(1, tree.header().fontMetrics().horizontalAdvance("Freq. (GHz)") + 16)
             tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             tree.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
             tree.customContextMenuRequested.connect(self._dataset_menu)
@@ -532,7 +537,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
 
     def show_guide(self) -> None:
-        GuideDialog(self).exec()
+        dialog = GuideDialog(self)
+        dialog.start_tour_button.setVisible(self.parentWidget() is None)
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            self.start_guided_tour()
+
+    def start_guided_tour(self) -> None:
+        from gui.guided_demo import GuidedDemo
+
+        demo = self._guide_demo_window
+        if demo is None:
+            # Give the demo its own settings so experiments stay in this window.
+            directory = QtCore.QTemporaryDir()
+            if not directory.isValid():
+                QtWidgets.QMessageBox.warning(self, "Guided tour", "Could not create the demo workspace.")
+                return
+            settings = QtCore.QSettings(directory.filePath("demo.ini"), QtCore.QSettings.IniFormat)
+            settings.setValue("ui/theme", self.theme)
+            demo = MainWindow(self, settings=settings)
+            demo._guide_settings_directory = directory
+            demo.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+            demo.setWindowTitle(f"{self.windowTitle()} — Guided Tour")
+            demo.addDockWidget(QtCore.Qt.BottomDockWidgetArea, GuidedDemo(demo))
+            self._guide_demo_window = demo
+            demo.destroyed.connect(self._clear_guided_tour)
+        demo.show()
+        demo.raise_()
+        demo.activateWindow()
+
+    def _clear_guided_tour(self) -> None:
+        self._guide_demo_window = None
 
     def open_datasets(self) -> None:
         """Compatibility alias for the original import action."""
@@ -610,20 +644,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status.showMessage(f"Importing {filename} ({current}/{total})")
 
     def _refresh_datasets(self, refresh_trace_table: bool = True) -> None:
-        self.dataset_tree.clear()
+        tree = self.dataset_tree
+        tree.clear()
+        metrics = tree.fontMetrics()
+        name_width = 0
+        frequency_width = tree.header().fontMetrics().horizontalAdvance(tree.headerItem().text(1))
         ordered_datasets = sorted(
             self.datasets.values(),
             key=lambda item: ({"cphy": 0, "dphy": 1, "se": 2}[item.network_type], item.nports, item.name.casefold()),
         )
         for dataset in ordered_datasets:
             low, high = dataset.frequency_range
-            top = QtWidgets.QTreeWidgetItem([f"[{dataset.file_type} · {dataset.analysis_label}] {dataset.name}", f"{dataset.points} pts · SE {dataset.se_reference_z0:g} Ω"])
+            prefix = f"[{dataset.file_type} · {dataset.analysis_label}] "
+            label = prefix + dataset.name
+            frequency = f"{low / 1e9:.6g}–{high / 1e9:.6g}"
+            name_preview = prefix + dataset.name[:30].ljust(30, "n")
+            name_width = max(name_width, metrics.horizontalAdvance(name_preview))
+            frequency_width = max(frequency_width, metrics.horizontalAdvance(frequency))
+            top = QtWidgets.QTreeWidgetItem([label, frequency])
             top.setData(0, QtCore.Qt.UserRole, dataset.id)
-            top.addChild(QtWidgets.QTreeWidgetItem(["File", dataset.filename]))
-            top.addChild(QtWidgets.QTreeWidgetItem(["Frequency", f"{low / 1e9:.6g}–{high / 1e9:.6g} GHz"]))
-            top.addChild(QtWidgets.QTreeWidgetItem(["Port map", ", ".join(map(str, dataset.port_mapping))]))
-            top.addChild(QtWidgets.QTreeWidgetItem(["Source Z0", dataset.source_z0_summary]))
-            top.addChild(QtWidgets.QTreeWidgetItem(["Common SE Z0", f"{dataset.se_reference_z0:g} Ω"]))
+            top.setToolTip(0, label)
+            top.setToolTip(1, f"{frequency} GHz")
             if dataset.network_type == "cphy":
                 x_z0, y_z0, cm_z0 = dataset.modal_reference_z0
                 modal_text = f"X {x_z0:g} · Y {y_z0:g} · CM {cm_z0:g} Ω ({dataset.impedance_preset})"
@@ -632,8 +673,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 modal_text = f"DM {differential_z0:g} · CM {common_z0:g} Ω ({dataset.impedance_preset})"
             else:
                 modal_text = "SE only"
-            top.addChild(QtWidgets.QTreeWidgetItem(["Modal target Z0", modal_text]))
-            self.dataset_tree.addTopLevelItem(top)
+            details = (
+                ("File", dataset.filename),
+                ("Points", f"{dataset.points:,}"),
+                ("Port map", ", ".join(map(str, dataset.port_mapping))),
+                ("Source Z0", dataset.source_z0_summary),
+                ("Common SE Z0", f"{dataset.se_reference_z0:g} Ω"),
+                ("Modal target Z0", modal_text),
+            )
+            for key, value in details:
+                child = QtWidgets.QTreeWidgetItem(top, [key, value])
+                child.setToolTip(1, value)
+            tree.addTopLevelItem(top)
+        tree.setColumnWidth(1, frequency_width + 16)
+        if ordered_datasets:
+            scrollbar_extent = tree.style().pixelMetric(QtWidgets.QStyle.PixelMetric.PM_ScrollBarExtent)
+            tree.setMinimumWidth(
+                name_width + tree.indentation() + 14 + tree.columnWidth(1)
+                + scrollbar_extent + 2 * tree.frameWidth()
+            )
+        else:
+            tree.setMinimumWidth(0)
         self._apply_duplicate_dataset_highlights()
         self.trace_selector.set_datasets(self.datasets)
         if refresh_trace_table:

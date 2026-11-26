@@ -126,7 +126,7 @@ class PlotSettingsDialog(QtWidgets.QDialog):
         form.addRow("Preset", self.preset)
         form.addRow("Custom pixels", dimensions)
         note = QtWidgets.QLabel(
-            "Export Plot PNG and each plot's C (Copy) button use these shared settings. "
+            "Export Plot PNG and each plot's Copy button use these shared settings. "
             "Preset/Custom sizes are re-laid out at the target pixels, so text is not stretched."
         )
         note.setWordWrap(True)
@@ -191,7 +191,7 @@ class GuideDialog(QtWidgets.QDialog):
             <li>Add markers, move or enter their GHz position, and hide/show/delete marker lines or the Marker Info panel. Legend can be shown, hidden and dragged within the graph.</li>
             <li>Use <b>Plot / Traces</b> to search, sort, select visible rows, and batch-edit visibility, color, line style or deletion. Delete All Traces requires two confirmations.</li>
             <li>Use <b>Save Workspace</b> / <b>Load Workspace</b> to preserve datasets, mapping, impedance, plots, traces and markers.</li>
-            <li>Use <b>Plot Settings</b> for font sizes, rendering quality and persistent PNG/Clipboard options. Export the active plot as PNG, export traces as CSV, or use its <b>C</b> button to copy the configured image.</li>
+            <li>Use <b>Plot Settings</b> for font sizes, rendering quality and persistent PNG/Clipboard options. Export the active plot as PNG, export traces as CSV, or use its <b>Copy</b> button to copy the configured image.</li>
             </ol>
             <h2>Main Toolbar</h2><p>The right-side order is <b>✓ UnLock / closed-lock Lock → Plot Settings → Export Plot PNG → Export Trace CSV → Light/Dark Mode → Guide</b>. The state icons are custom theme-aware drawings rather than system emoji.</p>
             <h2>Plot Mouse Controls</h2><ul>
@@ -199,7 +199,7 @@ class GuideDialog(QtWidgets.QDialog):
             <li><b>Ctrl + left-click:</b> add an unselected curve or remove an already-selected curve. Repeat to select multiple curves.</li>
             <li><b>Shift + left-drag:</b> pan the plot.</li>
             <li><b>Mouse wheel:</b> zoom only the selected plot (the card with the teal border). Over an unselected plot or outside the graph, the wheel scrolls the main plot list instead.</li>
-            <li><b>Lock / UnLock:</b> the theme-aware check/lock control in the main toolbar keeps each graph and its plot-action toolbar at the current width while the main window is resized. Expanding Marker Info does not move Apply, Autoscale, + Marker, Legend, or C. Horizontal scrolling appears when needed.</li>
+            <li><b>Lock / UnLock:</b> the theme-aware check/lock control in the main toolbar keeps each graph and its plot-action toolbar at the current width while the main window is resized. Expanding Marker Info does not move Apply, Autoscale, + Marker, Legend, or Copy. Horizontal scrolling appears when needed.</li>
             <li><b>Marker information:</b> adding a Marker leaves its information panel collapsed by default. Use ▼ Marker Info beside the plot toolbar controls to open it and ▲ in the panel header to hide it. The panel expands outward to the right without squeezing the graph, and the main horizontal scrollbar exposes the added area. The boundary remains draggable while expanded.</li>
             <li><b>Legend R/A mode:</b> click <b>R</b> inside the Legend to enter Report mode and edit concise labels for currently visible traces. Hidden traces are omitted. The editor shows a read-only sample of each trace's current color and Solid/Dash/Dot style; change styles only in Plot / Traces. The button changes to <b>A</b>; click it to return to the full Analysis Legend. Ctrl selections and Highlight state are retained, while Report text stays in the normal theme color.</li>
             <li><b>Legend position:</b> moving the Legend below Frequency is temporarily disabled while that interaction is redesigned; the floating ↓ control and bottom controls are hidden. Existing saved below-Legend layouts can still be displayed.</li>
@@ -223,6 +223,12 @@ class GuideDialog(QtWidgets.QDialog):
         for title, html in pages:
             if title == "4. Revision History":
                 html = (
+                    "<h2>v1.3</h2><ul>"
+                    "<li>Interactive guided tour with bundled S2P, S4P, and S6P examples</li>"
+                    "<li>Ctrl/Shift dataset multi-select and compact dataset frequency column</li>"
+                    "<li>Trace table keeps its scroll position after edits</li>"
+                    "<li>Scrollable plot Legend with hidden scrollbar in exports</li>"
+                    "<li>Copy label on plot toolbars</li></ul>"
                     "<h2>v1.2</h2><ul>"
                     "<li>Application-wide UI scale and a restart prompt after saving a new scale</li>"
                     "<li>Report Legend fits shorter labels after switching modes</li>"
@@ -233,6 +239,8 @@ class GuideDialog(QtWidgets.QDialog):
             browser.setHtml(html)
             tabs.addTab(browser, title)
         close = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        self.start_tour_button = close.addButton("Start guided tour", QtWidgets.QDialogButtonBox.ActionRole)
+        self.start_tour_button.clicked.connect(self.accept)
         close.rejected.connect(self.reject)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(tabs)

@@ -52,11 +52,16 @@ class TraceSortItem(QtWidgets.QTableWidgetItem):
 class TraceSelector(QtWidgets.QWidget):
     trace_requested = QtCore.Signal(str, str)
     traces_requested = QtCore.Signal(object)
+    CUSTOM_DATASETS = "CUSTOM:datasets"
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._datasets: dict[str, Dataset] = {}
+        self._custom_dataset_ids: list[str] = []
         self.dataset_combo = QtWidgets.QComboBox()
+        self.select_datasets_button = QtWidgets.QToolButton(text="multiple")
+        self.select_datasets_button.setToolTip("Select multiple datasets")
+        self.select_datasets_button.setEnabled(False)
         self.trace_type = QtWidgets.QComboBox()
         self.search = QtWidgets.QLineEdit()
         self.search.setPlaceholderText("Search parameters; * wildcard, / OR, space AND")
@@ -84,7 +89,10 @@ class TraceSelector(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QtWidgets.QLabel("Dataset"))
-        layout.addWidget(self.dataset_combo)
+        dataset_row = QtWidgets.QHBoxLayout()
+        dataset_row.addWidget(self.dataset_combo, 1)
+        dataset_row.addWidget(self.select_datasets_button)
+        layout.addLayout(dataset_row)
         layout.addWidget(QtWidgets.QLabel("Trace type"))
         layout.addWidget(self.trace_type)
         layout.addWidget(self.search)
@@ -94,6 +102,7 @@ class TraceSelector(QtWidgets.QWidget):
         self.search.textChanged.connect(self.refresh)
         self.trace_type.currentIndexChanged.connect(self.refresh)
         self.dataset_combo.currentIndexChanged.connect(self._dataset_changed)
+        self.select_datasets_button.clicked.connect(self._choose_datasets)
         for widget in (self.response_filter, self.stimulus_filter, self.route_filter, self.r_filter):
             widget.currentIndexChanged.connect(self.refresh)
         self.add_button.clicked.connect(self._emit_selected)
@@ -103,6 +112,8 @@ class TraceSelector(QtWidgets.QWidget):
     def set_datasets(self, datasets: dict[str, Dataset]) -> None:
         current = self.dataset_combo.currentData()
         self._datasets = datasets
+        self._custom_dataset_ids = [item for item in self._custom_dataset_ids if item in datasets]
+        self.select_datasets_button.setEnabled(len(datasets) >= 2)
         self.dataset_combo.blockSignals(True)
         self.dataset_combo.clear()
         cphy = [item for item in datasets.values() if item.network_type == "cphy"]
@@ -125,6 +136,10 @@ class TraceSelector(QtWidgets.QWidget):
         )
         for dataset in ordered:
             self.dataset_combo.addItem(f"[{dataset.file_type} · {dataset.analysis_label}] {dataset.name}", dataset.id)
+        if self._custom_dataset_ids:
+            self.dataset_combo.addItem(
+                f"[Selected] {len(self._custom_dataset_ids)} datasets", self.CUSTOM_DATASETS
+            )
         if current:
             index = self.dataset_combo.findData(current)
             if index >= 0:
@@ -132,11 +147,63 @@ class TraceSelector(QtWidgets.QWidget):
         self.dataset_combo.blockSignals(False)
         self._dataset_changed()
 
+    def _choose_datasets(self) -> None:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Select datasets")
+        dialog.resize(440, 460)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addWidget(QtWidgets.QLabel("Ctrl + click to toggle. Shift + click to select a range."))
+        choices = QtWidgets.QListWidget(dialog)
+        choices.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        current = self.dataset_combo.currentData()
+        selected = set(self._custom_dataset_ids) if current == self.CUSTOM_DATASETS else {current}
+        for index in range(self.dataset_combo.count()):
+            dataset_id = self.dataset_combo.itemData(index)
+            if dataset_id in self._datasets:
+                item = QtWidgets.QListWidgetItem(self.dataset_combo.itemText(index), choices)
+                item.setData(QtCore.Qt.UserRole, dataset_id)
+                item.setSelected(dataset_id in selected)
+        if choices.selectedItems():
+            choices.setCurrentItem(choices.selectedItems()[0], QtCore.QItemSelectionModel.NoUpdate)
+        layout.addWidget(choices)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        ok = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        ok.setEnabled(bool(choices.selectedItems()))
+        choices.itemSelectionChanged.connect(lambda: ok.setEnabled(bool(choices.selectedItems())))
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            selected_items = sorted(choices.selectedItems(), key=choices.row)
+            self._custom_dataset_ids = [item.data(QtCore.Qt.UserRole) for item in selected_items]
+            self.set_datasets(self._datasets)
+            self.dataset_combo.setCurrentIndex(self.dataset_combo.findData(self.CUSTOM_DATASETS))
+        dialog.deleteLater()
+
+    def _selected_dataset_ids(self) -> list[str]:
+        data = self.dataset_combo.currentData()
+        if data == self.CUSTOM_DATASETS:
+            return self._custom_dataset_ids
+        if data in self._datasets:
+            return [data]
+        if isinstance(data, str) and data.startswith("ALL:"):
+            parts = data.split(":")
+            if parts[1] == "se":
+                return [item.id for item in self._datasets.values() if item.nports == int(parts[2])]
+            return [item.id for item in self._datasets.values() if item.network_type == parts[1]]
+        return []
+
+    def _shared_port_count(self) -> int:
+        return min((self._datasets[item].nports for item in self._selected_dataset_ids()), default=1)
+
     def _dataset_changed(self) -> None:
         data = self.dataset_combo.currentData()
-        dataset = self._datasets.get(data)
-        parts = data.split(":") if isinstance(data, str) and data.startswith("ALL:") else []
-        network_type = parts[1] if parts else (dataset.network_type if dataset else "se")
+        kinds = {self._datasets[item].network_type for item in self._selected_dataset_ids()}
+        network_type = kinds.pop() if len(kinds) == 1 else "se"
+        if isinstance(data, str) and data.startswith("ALL:se:"):
+            network_type = "se"
         previous = self.trace_type.currentData()
         self.trace_type.blockSignals(True)
         self.trace_type.clear()
@@ -147,8 +214,7 @@ class TraceSelector(QtWidgets.QWidget):
             self.trace_type.addItem("C-PHY modal (X / Y / CM)", "cphy")
             self.trace_type.addItem("Single-ended (SE ports 1–6)", "se")
         else:
-            nports = int(parts[2]) if len(parts) > 2 else (dataset.nports if dataset else 1)
-            self.trace_type.addItem(f"Single-ended (SE ports 1–{nports})", "se")
+            self.trace_type.addItem(f"Single-ended (SE ports 1–{self._shared_port_count()})", "se")
         index = self.trace_type.findData(previous)
         self.trace_type.setCurrentIndex(index if index >= 0 else 0)
         self.trace_type.blockSignals(False)
@@ -198,18 +264,8 @@ class TraceSelector(QtWidgets.QWidget):
         route = None if self.route_filter.currentIndex() == 0 else self.route_filter.currentText()
         r_value = None if self.r_filter.currentIndex() == 0 else int(self.r_filter.currentText()[0])
         self.parameter_list.clear()
-        dataset_data = self.dataset_combo.currentData()
-        dataset = self._datasets.get(dataset_data)
-        if dataset is None and isinstance(dataset_data, str) and dataset_data.startswith("ALL:"):
-            parts = dataset_data.split(":")
-            kind = parts[1]
-            if kind == "se" and len(parts) > 2:
-                nports = int(parts[2])
-                dataset = next((item for item in self._datasets.values() if item.nports == nports), None)
-            else:
-                dataset = next((item for item in self._datasets.values() if item.network_type == kind), None)
         if is_se:
-            names = se_parameter_names(dataset.nports if dataset else 6)
+            names = se_parameter_names(self._shared_port_count())
         elif trace_type == "dphy":
             names = dphy_parameter_names()
         else:
@@ -237,22 +293,9 @@ class TraceSelector(QtWidgets.QWidget):
             self.parameter_list.addItem(name)
 
     def _emit_selected(self) -> None:
-        dataset_id = self.dataset_combo.currentData()
-        if not dataset_id:
-            return
-        if isinstance(dataset_id, str) and dataset_id.startswith("ALL:"):
-            parts = dataset_id.split(":")
-            kind = parts[1]
-            if kind == "se" and len(parts) > 2:
-                nports = int(parts[2])
-                dataset_ids = [item.id for item in self._datasets.values() if item.nports == nports]
-            else:
-                dataset_ids = [item.id for item in self._datasets.values() if item.network_type == kind]
-        else:
-            dataset_ids = [dataset_id]
         requests = [
             (dataset, item.text())
-            for dataset in dataset_ids
+            for dataset in self._selected_dataset_ids()
             for item in self.parameter_list.selectedItems()
         ]
         if not requests:
@@ -372,7 +415,8 @@ class TraceTable(QtWidgets.QWidget):
         datasets: dict[str, Dataset],
         context_id: str | None = None,
     ) -> None:
-        if context_id != self._context_id:
+        same_plot = context_id == self._context_id
+        if not same_plot:
             self._highlighted_trace_keys.clear()
         self._context_id = context_id
         self._traces, self._datasets = traces, datasets
@@ -380,7 +424,7 @@ class TraceTable(QtWidgets.QWidget):
             index for index, trace in enumerate(traces)
             if (trace.dataset_id, trace.parameter) in self._highlighted_trace_keys
         }
-        self._refresh_rows()
+        self._refresh_rows(preserve_scroll=same_plot)
 
     def highlight_trace(self, source_index: int) -> None:
         self.highlight_traces([source_index])
@@ -416,7 +460,10 @@ class TraceTable(QtWidgets.QWidget):
             return f"Missing {trace.parameter}"
         return " ".join((dataset.name, dataset.filename, dataset.path, trace.parameter))
 
-    def _refresh_rows(self) -> None:
+    def _refresh_rows(self, *, preserve_scroll: bool = False) -> None:
+        vertical = self.table.verticalScrollBar()
+        horizontal = self.table.horizontalScrollBar()
+        scroll_x, scroll_y = horizontal.value(), vertical.value()
         query = self.search.text()
         self._row_indices = [
             index for index, trace in enumerate(self._traces)
@@ -483,6 +530,10 @@ class TraceTable(QtWidgets.QWidget):
                         item.setBackground(highlight)
                         item.setForeground(foreground)
         self.table.blockSignals(False)
+        if preserve_scroll:
+            self.table.doItemsLayout()
+            horizontal.setValue(scroll_x)
+            vertical.setValue(scroll_y)
         self._selection_changed()
 
     def _sort_value(self, source_index: int, column: int):

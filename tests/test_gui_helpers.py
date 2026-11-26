@@ -407,6 +407,74 @@ def test_floating_legend_shrinks_for_short_report_labels_with_all_traces_visible
     widget.close()
 
 
+def test_overflowing_floating_legend_scrolls_and_hides_scrollbar_during_capture(monkeypatch):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    datasets = {}
+    for index in range(32):
+        dataset = Dataset(
+            f"DUT {index:02}", f"dut{index}.s2p", np.array([1e9, 2e9]),
+            np.zeros((2, 2, 2), complex), 50, network_type="se",
+        )
+        datasets[dataset.id] = dataset
+    config = PlotConfig("Plot", traces=[TraceConfig(key, "S11") for key in datasets])
+    widget = AnalyzerPlotWidget(config, datasets, {}, "Dark")
+    widget.resize(1000, 580)
+    widget.show()
+    app.processEvents()
+
+    legend = widget.legend
+    assert legend.scrollbar.isVisible()
+    assert legend.scrollbar.maximum() > 0
+    scene_pos = legend.mapToScene(legend.boundingRect().center())
+    position = QtCore.QPointF(widget.plot.mapFromScene(scene_pos))
+    event = QtGui.QWheelEvent(
+        position, position, QtCore.QPoint(), QtCore.QPoint(0, -120),
+        QtCore.Qt.NoButton, QtCore.Qt.NoModifier, QtCore.Qt.NoScrollPhase, False,
+    )
+    assert widget.eventFilter(widget.plot.viewport(), event)
+    original_scroll = legend.scrollbar.value()
+    assert original_scroll > 0
+    assert legend._contents.y() == -original_scroll
+    render = widget._render_at_native_size
+
+    def inspect_capture(target):
+        assert not legend.scrollbar.isVisible()
+        return render(target)
+
+    monkeypatch.setattr(widget, "_render_at_native_size", inspect_capture)
+    assert not widget.render_pixmap().isNull()
+    assert legend.scrollbar.isVisible()
+    assert legend.scrollbar.value() == original_scroll
+    widget.close()
+
+
+def test_trace_table_preserves_scroll_after_editing_properties(monkeypatch):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    table = TraceTable()
+    traces = [TraceConfig("dataset", "S11") for _ in range(45)]
+    table.set_traces(traces, {}, "plot")
+    table.trace_changed.connect(lambda: table.set_traces(traces, {}, "plot"))
+    table.resize(420, 350)
+    table.show()
+    app.processEvents()
+    bar = table.table.verticalScrollBar()
+    assert bar.maximum() >= 16
+    bar.setValue(16)
+    monkeypatch.setattr(QtWidgets.QColorDialog, "getColor", lambda *_: QtGui.QColor("#336699"))
+
+    table._set_visible(16, False)
+    assert bar.value() == 16
+    table._choose_color(16)
+    assert bar.value() == 16
+    table._set_style(16, "Dash")
+    app.processEvents()
+    assert bar.value() == 16
+    assert not traces[16].visible
+    assert traces[16].color == "#336699"
+    assert traces[16].line_style == "Dash"
+    table.close()
+
+
 def test_cancel_report_legend_editor_keeps_analysis_mode(monkeypatch):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     frequency = np.array([1e9, 2e9])
@@ -715,6 +783,7 @@ def test_below_legend_height_does_not_accumulate_when_switching_modes():
         assert len(widget.docked_legend.entries) == len(traces)
         assert widget.docked_legend.height() == analysis_height
         assert widget.minimumHeight() == analysis_minimum
+    widget.close()
     assert app is not None
 
 
@@ -827,6 +896,50 @@ def test_trace_selector_adds_all_phy_entries_and_disables_rotate_for_dphy():
     selector._emit_selected()
     assert len(batches) == 1 and len(batches[0]) == 2
     assert app is not None
+
+
+def test_trace_selector_ctrl_and_shift_choose_a_dataset_subset(monkeypatch):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    datasets = [
+        Dataset(name, f"{name}.s{ports}p", np.array([1e9]), np.zeros((1, ports, ports), complex), 50,
+                network_type="se")
+        for name, ports in (("A", 2), ("B", 3), ("C", 3), ("D", 3))
+    ]
+    selector = TraceSelector()
+    selector.set_datasets({dataset.id: dataset for dataset in datasets})
+    selector.dataset_combo.setCurrentIndex(selector.dataset_combo.findData(datasets[0].id))
+
+    def choose(dialog):
+        dialog.show()
+        app.processEvents()
+        choices = dialog.findChild(QtWidgets.QListWidget)
+
+        def click(row, modifier=QtCore.Qt.NoModifier):
+            pos = choices.visualItemRect(choices.item(row)).center()
+            QtTest.QTest.mouseClick(choices.viewport(), QtCore.Qt.LeftButton, modifier, pos)
+
+        click(0)
+        click(2, QtCore.Qt.ControlModifier)
+        assert [choices.row(item) for item in choices.selectedItems()] == [0, 2]
+        click(1)
+        click(3, QtCore.Qt.ShiftModifier)
+        assert [choices.row(item) for item in choices.selectedItems()] == [1, 2, 3]
+        click(2, QtCore.Qt.ControlModifier)
+        click(0, QtCore.Qt.ControlModifier)
+        dialog.accept()
+        return QtWidgets.QDialog.Accepted
+
+    monkeypatch.setattr(QtWidgets.QDialog, "exec", choose)
+    selector.select_datasets_button.click()
+    assert selector.dataset_combo.currentText() == "[Selected] 3 datasets"
+    assert selector.parameter_list.count() == 4
+    matches = selector.parameter_list.findItems("S21", QtCore.Qt.MatchExactly)
+    matches[0].setSelected(True)
+    requests = []
+    selector.traces_requested.connect(requests.extend)
+    selector.add_button.click()
+    assert requests == [(datasets[index].id, "S21") for index in (0, 1, 3)]
+    selector.close()
 
 
 def test_se_only_datasets_offer_only_se_and_same_port_batch_group():
@@ -1022,7 +1135,7 @@ def test_frozen_plot_keeps_action_buttons_fixed_when_marker_info_expands():
     widget.set_plot_width_frozen(True)
     app.processEvents()
     assert [button.text() for button in widget.plot_action_buttons] == [
-        "Apply", "Autoscale", "+ Marker", "Legend", "C",
+        "Apply", "Autoscale", "+ Marker", "Legend", "Copy",
     ]
     frozen_toolbar_width = widget.toolbar_widget.width()
     before = [button.mapTo(widget, QtCore.QPoint(0, 0)).x() for button in widget.plot_action_buttons]
@@ -1358,7 +1471,7 @@ def test_main_window_exposes_v1_import_theme_guide_and_plot_settings_actions():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     window = MainWindow()
     labels = {action.text() for action in window.findChildren(QtGui.QAction)}
-    assert "v1.2" in window.windowTitle()
+    assert "v1.3" in window.windowTitle()
     assert {"Import SNP", "UnLock", "Guide", "Plot Settings", "Export Plot PNG", "Export Trace CSV"} <= labels
     assert "Import S6P" not in labels and "Import S4P" not in labels
     toolbar_labels = [action.text() for action in window.findChildren(QtWidgets.QToolBar)[0].actions()]
@@ -1376,6 +1489,49 @@ def test_main_window_exposes_v1_import_theme_guide_and_plot_settings_actions():
     assert control_dock.features() == QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures
     assert control_dock.allowedAreas() == QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
     assert app is not None
+
+
+def test_guided_tour_uses_bundled_examples_without_changing_workspace(monkeypatch, tmp_path):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from gui.guided_demo import GuidedDemo
+
+    original = MainWindow()
+    original_plot = original.active_plot()
+
+    def start(dialog):
+        dialog.start_tour_button.click()
+        return dialog.result()
+
+    monkeypatch.setattr(GuideDialog, "exec", start)
+    original.show_guide()
+    demo = original._guide_demo_window
+    assert demo is not None and demo.isWindow()
+    tour = demo.findChild(GuidedDemo)
+    tour.try_button.click()
+    assert {dataset.nports for dataset in demo.datasets.values()} == {2, 4, 6}
+    tour.try_button.click()
+    assert len(demo.datasets) == 3
+    tour.next_button.click()
+    tour.try_button.click()
+    plot = demo.active_plot()
+    assert {trace.parameter for trace in plot.traces} == {"S21", "Sdd21", "Sxx21_1R"}
+    tour.next_button.click()
+    tour.try_button.click()
+    assert plot.frequency_range_hz == (1e9, 10e9)
+    tour.next_button.click()
+    tour.try_button.click()
+    assert plot.markers[-1].frequency_hz == 5e9
+    tour.next_button.click()
+    png_path = tmp_path / "guided_demo.png"
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", lambda *_: (str(png_path), "PNG"))
+    tour.try_button.click()
+    assert png_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert not original.datasets and not original_plot.traces and not original_plot.markers
+    assert demo.settings.fileName() != original.settings.fileName()
+    tour.next_button.click()
+    app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+    assert original._guide_demo_window is None
+    original.close()
 
 
 def test_guide_documents_plot_mouse_controls():
@@ -1416,6 +1572,9 @@ def test_inactive_plot_wheel_is_forwarded_to_main_scroll():
 
         def pixelDelta(self):
             return QtCore.QPoint()
+
+        def position(self):
+            return QtCore.QPointF()
 
         def accept(self):
             self.accepted = True
@@ -1523,7 +1682,8 @@ def test_single_dataset_list_orders_cphy_before_dphy_then_by_name():
         "D-Lane", "d.s4p", frequency, np.zeros((2, 4, 4), complex), 50,
         (1, 2, 3, 4), network_type="dphy", impedance_preset="DIFF nominal",
     )
-    cphy_b = Dataset("C-Zebra", "cz.s6p", frequency, np.zeros((2, 6, 6), complex), 50)
+    long_name = "C-Zebra_ABCDEFGHIJKLMNOPQRSTUVWXYZ_01"
+    cphy_b = Dataset(long_name, "cz.s6p", frequency, np.zeros((2, 6, 6), complex), 50)
     cphy_a = Dataset("C-Alpha", "ca.s6p", frequency, np.zeros((2, 6, 6), complex), 50)
     window = MainWindow()
     window.datasets = {dphy.id: dphy, cphy_b.id: cphy_b, cphy_a.id: cphy_a}
@@ -1531,7 +1691,25 @@ def test_single_dataset_list_orders_cphy_before_dphy_then_by_name():
     labels = [window.dataset_tree.topLevelItem(row).text(0) for row in range(3)]
     assert labels == [
             "[S6P · C-PHY/SE] C-Alpha",
-            "[S6P · C-PHY/SE] C-Zebra",
+            f"[S6P · C-PHY/SE] {long_name}",
             "[S4P · DIFF/SE] D-Lane",
     ]
+    tree = window.dataset_tree
+    row = tree.topLevelItem(0)
+    assert tree.headerItem().text(1) == "Freq. (GHz)"
+    assert row.text(1) == "1–2"
+    assert row.toolTip(1) == "1–2 GHz"
+    window.show()
+    app.processEvents()
+    metrics = tree.fontMetrics()
+    assert tree.columnWidth(0) >= metrics.horizontalAdvance(
+        f"[S6P · C-PHY/SE] {long_name[:30]}"
+    ) + tree.indentation()
+    assert not row.isExpanded()
+    assert tree.expandsOnDoubleClick()
+    details = {row.child(index).text(0): row.child(index).text(1) for index in range(row.childCount())}
+    assert details["File"] == "ca.s6p"
+    assert details["Points"] == "2"
+    assert details["Common SE Z0"] == "50 Ω"
+    window.close()
     assert app is not None

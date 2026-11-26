@@ -6,12 +6,15 @@ import PySide6
 
 
 app_icon = Path(SPECPATH) / 'assets' / 'cphy-viewer.ico'
+examples_dir = Path(SPECPATH) / 'examples'
+tour_examples = ('cphy_demo_6port.s6p', 'diff_demo_4port.s4p', 'se_demo_2port.s2p')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[(str(app_icon), 'assets')],
+    datas=[(str(app_icon), 'assets')]
+          + [(str(examples_dir / name), 'examples') for name in tour_examples],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -52,7 +55,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='C-PHY-S-Parameter-Viewer-v1.2',
+    name='C-PHY-S-Parameter-Viewer-v1.3',
     icon=str(app_icon),
     debug=False,
     bootloader_ignore_signals=False,

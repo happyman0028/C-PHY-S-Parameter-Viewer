@@ -1,4 +1,4 @@
-# C-PHY S-Parameter Viewer & Analyzer — v1.2
+# C-PHY S-Parameter Viewer & Analyzer — v1.3
 
 Windows desktop engineering tool for C-PHY S6P and DIFF S4P analysis. It converts single-ended Touchstone data into C-PHY or DIFF modal S-parameters while retaining access to every SE trace.
 
@@ -21,16 +21,19 @@ Build in a clean virtual environment so another installed Qt binding cannot be c
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
 $env:QT_API = "pyside6"
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean C-PHY-S-Parameter-Viewer-v1.2.spec
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean C-PHY-S-Parameter-Viewer-v1.3.spec
 ```
 
-The release specification excludes an incompatible ICU DLL that may be discovered elsewhere on the build machine and uses the Windows system ICU expected by Qt. It also keeps the bundled MSVC runtime aligned with the PySide6 wheel. The resulting file is `dist\C-PHY-S-Parameter-Viewer-v1.2.exe`.
+The release specification excludes an incompatible ICU DLL that may be discovered elsewhere on the build machine and uses the Windows system ICU expected by Qt. It also keeps the bundled MSVC runtime aligned with the PySide6 wheel. The resulting file is `dist\C-PHY-S-Parameter-Viewer-v1.3.exe`.
 
 ## Quick start
+
+Open **Guide → Start guided tour** to practice in a separate viewer window with the bundled synthetic S2P, S4P, and S6P files in `examples/`. The five steps cover import, trace comparison, frequency ranges, markers, and export.
 
 1. Click **Import SNP** to load one or more `.sNp` Touchstone files. Every port count supports SE; S4P also supports DIFF (dm/cm), while S6P also supports C-PHY. Multi-file import shows progress in the status bar.
 2. Open the **Add Trace** tab.
 3. Dataset entries are labeled `[S6P · C-PHY]` or `[S4P · DIFF]`. Select the applicable modal or SE trace type, then filter or search the parameters.
+   Use **multiple** next to **Dataset** to choose a subset. `Ctrl`-click toggles individual datasets and `Shift`-click selects a range. Mixed dataset types offer the SE parameters shared by the selection.
 4. Select parameters and click **Add selected trace(s)**.
 5. Add more plots with **Add Plot**. Each plot has its own display format and ranges and retains a readable minimum height; multiple plots use the main vertical scrollbar instead of being compressed. In **Plot / Traces**, use **Go** to activate/scroll to a plot, **Clone** to copy all of its settings, traces and markers after one confirmation (named `Clone-<original name>`), or **×** to delete it after two confirmations.
 6. Use **Plot / Traces** to change visibility, color, line style, or remove traces.
@@ -116,7 +119,7 @@ The **Single-ended** trace type provides all logical DUT-port parameters: 36 (`S
 - Mouse-wheel zoom is limited to the selected plot; the wheel scrolls the main plot list over inactive plots or non-graph areas
 - Compact two-row plot controls and a FIT home-view button that restores the latest Apply/Autoscale view after mouse zoom or pan
 - Light/Dark GUI switching with the last theme restored at startup
-- The clear custom **check UnLock / closed-lock Lock** state beside the theme switch freezes both graph width and plot-action button positions; the theme-aware icons do not depend on system emoji fonts. Marker Info expands outward without moving Apply/Autoscale/+ Marker/Legend/C, and horizontal scrolling appears when required
+- The clear custom **check UnLock / closed-lock Lock** state beside the theme switch freezes both graph width and plot-action button positions; the theme-aware icons do not depend on system emoji fonts. Marker Info expands outward without moving Apply/Autoscale/+ Marker/Legend/Copy, and horizontal scrolling appears when required
 - Per-plot Legend Hide/Show with drag confinement inside the plot and theme-aware text/background/border colors
 - Simplified plot context menu with Plot Options and Average at the top level
 - Plot Settings controls Legend, plot Title, and Axis font sizes for the active plot or all plots
@@ -126,7 +129,7 @@ The **Single-ended** trace type provides all logical DUT-port parameters: 36 (`S
 - Ctrl selections and pinned Find highlights persist through display changes and appended traces
 - Plot / Traces provides Select Visible plus double-confirmed Delete All Traces
 - Preset/custom PNG sizes use native target-size reflow instead of non-uniform bitmap stretching
-- Per-plot **C** button to copy the configured plot image to the clipboard
+- Per-plot **Copy** button to copy the configured plot image to the clipboard
 - Multiple movable markers (`M1`, `M2`, …) with color-coded, scrollable readout cards beside the plot
 - Direct GHz frequency entry, per-marker Hide/Show, and panel-level Hide All/Show All; hidden marker cards collapse their trace readings
 - Individual marker deletion plus confirmed **Delete All**; position, color, and visibility are saved in the workspace

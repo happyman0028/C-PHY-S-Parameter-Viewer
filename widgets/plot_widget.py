@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import math
 import re
 from pathlib import Path
 
@@ -174,6 +175,31 @@ class ConstrainedLegendItem(pg.LegendItem):
         self.mode_button: LegendModeButton | None = None
         self.dock_button: LegendModeButton | None = None
         super().__init__(*args, **kwargs)
+        # Keep the rows at their natural size inside a clipped viewport.
+        old_layout = self.layout
+        horizontal_spacing = old_layout.horizontalSpacing()
+        vertical_spacing = old_layout.verticalSpacing()
+        margins = old_layout.getContentsMargins()
+        self.setLayout(None)
+        self._clip = QtWidgets.QGraphicsRectItem(self)
+        self._clip.setPen(QtGui.QPen(QtCore.Qt.NoPen))
+        self._clip.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape)
+        self._contents = QtWidgets.QGraphicsWidget(self._clip)
+        self.layout = QtWidgets.QGraphicsGridLayout()
+        self.layout.setHorizontalSpacing(horizontal_spacing)
+        self.layout.setVerticalSpacing(vertical_spacing)
+        self.layout.setContentsMargins(*margins)
+        self._contents.setLayout(self.layout)
+        self.scrollbar = QtWidgets.QScrollBar(QtCore.Qt.Vertical)
+        self.scrollbar.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.scrollbar.setFixedWidth(12)
+        self.scrollbar.setSingleStep(24)
+        self.scrollbar.valueChanged.connect(self._scroll_contents)
+        self._scroll_proxy = QtWidgets.QGraphicsProxyWidget(self)
+        self._scroll_proxy.setWidget(self.scrollbar)
+        self._scroll_proxy.setZValue(2)
+        self._scroll_proxy.hide()
+        self._controls_visible = True
         self._layout_margins_without_controls = self.layout.getContentsMargins()
         if mode_toggle:
             left, top, right, bottom = self._layout_margins_without_controls
@@ -186,6 +212,7 @@ class ConstrainedLegendItem(pg.LegendItem):
         self.setCacheMode(QtWidgets.QGraphicsItem.CacheMode.DeviceCoordinateCache)
 
     def set_controls_visible(self, visible: bool) -> None:
+        self._controls_visible = visible
         if self.mode_button is None or self.dock_button is None:
             return
         left, top, right, bottom = self._layout_margins_without_controls
@@ -198,15 +225,38 @@ class ConstrainedLegendItem(pg.LegendItem):
 
     def updateSize(self) -> None:
         if self.size is None:
-            # Allocated label widths still reflect the old frame after a text
-            # change. The layout's preferred size uses the current text and
-            # includes spacing and the margin reserved for the A/R button.
-            self.resize(self.layout.effectiveSizeHint(QtCore.Qt.SizeHint.PreferredSize))
+            preferred = self.layout.effectiveSizeHint(QtCore.Qt.SizeHint.PreferredSize)
+            parent = self.parentItem()
+            available = parent.boundingRect().height() - 2 * self.margin if parent else 0
+            height = min(preferred.height(), available) if available > 0 else preferred.height()
+            self._contents.resize(preferred)
+            self.resize(preferred.width(), height)
+            self._clip.setRect(self.boundingRect())
+            self.scrollbar.setPageStep(max(1, int(height)))
+            self.scrollbar.setRange(0, max(0, math.ceil(preferred.height() - height)))
+            show_scrollbar = self._controls_visible and self.scrollbar.maximum() > 0
+            scroll_top = 23 if self.mode_button is not None else 2
+            self._scroll_proxy.setGeometry(QtCore.QRectF(
+                preferred.width() - 15, scroll_top, 12, max(1, height - scroll_top - 3)
+            ))
+            self._scroll_proxy.setVisible(show_scrollbar)
         if self.mode_button is not None:
             rect = self.boundingRect()
             self.mode_button.setPos(rect.right() - 20, rect.top() + 2)
         if self.dock_button is not None:
             self.dock_button.hide()
+
+    def _scroll_contents(self, position: int) -> None:
+        self._contents.setY(-position)
+
+    def scroll_at(self, scene_position: QtCore.QPointF, delta: int) -> bool:
+        if (not delta or not self.isVisible() or not self.scrollbar.maximum()
+                or not self.boundingRect().contains(self.mapFromScene(scene_position))):
+            return False
+        step = self.scrollbar.singleStep()
+        distance = max(1, round(abs(delta) * step / 120))
+        self.scrollbar.setValue(self.scrollbar.value() + (distance if delta < 0 else -distance))
+        return True
 
     def _clamped_position(self, requested) -> QtCore.QPointF:
         requested = QtCore.QPointF(requested)
@@ -242,6 +292,7 @@ class ConstrainedLegendItem(pg.LegendItem):
             return
         if parent is None:
             return
+        self.updateSize()
         clamped = self._clamped_position(self.pos())
         if clamped != self.pos():
             self.autoAnchor(clamped, relative=False)
@@ -485,6 +536,9 @@ class DockedLegendWidget(QtWidgets.QWidget):
             layout.addStretch(1)
         for position, widget in enumerate(row):
             layout.addWidget(widget, 0, QtCore.Qt.AlignVCenter)
+            # Newly restored Analysis entries must participate in sizeHint()
+            # immediately, including before Qt processes pending show events.
+            widget.show()
             if self.alignment == "Distribute evenly" and position < len(row) - 1:
                 layout.addStretch(1)
         if self.alignment in ("Center", "Left") or not row:
@@ -966,8 +1020,7 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         self.marker_expand_button = QtWidgets.QToolButton(text="▼ Marker Info")
         self.marker_expand_button.setToolTip("Show marker information")
         self.marker_expand_button.hide()
-        copy_image = QtWidgets.QToolButton(text="C")
-        copy_image.setFixedWidth(28)
+        copy_image = QtWidgets.QToolButton(text="Copy")
         primary_row = QtWidgets.QHBoxLayout()
         primary_row.addWidget(self.name_edit)
         primary_row.addWidget(self.format_combo)
@@ -1254,11 +1307,16 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.plot.viewport():
-            if event.type() == QtCore.QEvent.Type.Wheel and not self._is_active_plot:
+            if event.type() == QtCore.QEvent.Type.Wheel:
                 delta = event.angleDelta().y() or event.pixelDelta().y()
-                self.wheel_scroll_requested.emit(int(delta))
-                event.accept()
-                return True
+                scene_pos = self.plot.mapToScene(event.position().toPoint())
+                if self.legend.scroll_at(scene_pos, int(delta)):
+                    event.accept()
+                    return True
+                if not self._is_active_plot:
+                    self.wheel_scroll_requested.emit(int(delta))
+                    event.accept()
+                    return True
             if event.type() == QtCore.QEvent.Type.MouseMove:
                 scene_pos = self.plot.mapToScene(event.position().toPoint())
                 self.update_trace_preview(scene_pos, event.modifiers())
@@ -2060,6 +2118,7 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
         export_theme = self.export_settings.get("theme", "Current GUI")
         desired_theme = self.theme if export_theme == "Current GUI" else export_theme
         original_theme = self.theme
+        original_legend_scroll = self.legend.scrollbar.value()
         original_panel_expanded = self.marker_splitter.panel_expanded()
         original_panel_width = self.marker_splitter.panel_width()
         theme_changed = desired_theme != original_theme
@@ -2106,6 +2165,7 @@ class AnalyzerPlotWidget(QtWidgets.QFrame):
                 notify=False,
             )
             self.legend.set_controls_visible(True)
+            self.legend.scrollbar.setValue(original_legend_scroll)
             self.docked_legend.set_controls_visible(True)
             self._set_plot_render_state(original_factor, original_antialias)
             self._force_high_plot_quality = False
